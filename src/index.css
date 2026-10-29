@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ink-980: oklch(0.145 0.022 255);
+    --ink-950: oklch(0.175 0.026 255);
+    --ink-900: oklch(0.215 0.032 255);
+    --ink-850: oklch(0.255 0.035 255);
+    --ink-800: oklch(0.30 0.038 255);
+    --steel-500: oklch(0.67 0.025 245);
+    --steel-300: oklch(0.82 0.022 245);
+    --steel-100: oklch(0.93 0.015 245);
+    --signal-cyan: oklch(0.81 0.14 210);
+    --signal-mint: oklch(0.82 0.16 155);
+    --signal-amber: oklch(0.83 0.16 85);
+    --signal-red: oklch(0.72 0.19 25);
+
+    --background: var(--ink-980);
+    --foreground: var(--steel-100);
+    --panel: var(--ink-950);
+    --panel-raised: var(--ink-900);
+    --border-subtle: var(--ink-800);
+    --text-muted: var(--steel-500);
+    --text-primary: var(--steel-100);
+    --accent-primary: var(--signal-cyan);
+    --accent-safe: var(--signal-mint);
+    --accent-warning: var(--signal-amber);
+    --accent-danger: var(--signal-red);
+
+    --background-hsl: 222 55% 4%;
+    --foreground-hsl: 210 25% 92%;
+    --border: 222 28% 19%;
+    --radius: 0.25rem;
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: var(--border-subtle);
+  }
+
+  html {
+    color-scheme: dark;
+    background: var(--background);
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100dvh;
+    background: var(--background);
+    color: var(--text-primary);
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Noto Sans Mono CJK SC", "Microsoft YaHei", monospace;
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button,
+  select,
+  input[type="range"],
+  input[type="checkbox"] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  input:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    color: var(--ink-980);
+    background: var(--accent-primary);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--ink-950);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--ink-800);
+  }
+}

@@ -1,0 +1,22 @@
+[Unit]
+Description=reBot local Web console and restricted launcher API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__REBOT_USER__
+WorkingDirectory=__REBOT_APP_DIR__
+Environment=REBOT_LAUNCHER_MODE=systemd
+Environment=REBOT_WORKSPACE=__REBOT_WORKSPACE__
+Environment=REBOT_NAMESPACE=/rebotarm
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=__REBOT_NODE__ __REBOT_APP_DIR__/server/index.mjs
+Restart=always
+RestartSec=3
+ProtectSystem=strict
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Seeed reBot Arm ROS 2 driver
+Requires=rebot-can.service
+After=rebot-can.service
+Before=rebot-rosbridge.service
+
+[Service]
+Type=simple
+User=__REBOT_USER__
+WorkingDirectory=__REBOT_WORKSPACE__
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source __REBOT_WORKSPACE__/install/setup.bash && exec ros2 launch rebotarm_bringup bringup.launch.py model:=rs channel:=can0'
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

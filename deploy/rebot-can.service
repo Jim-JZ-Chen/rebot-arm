@@ -1,0 +1,17 @@
+[Unit]
+Description=reBot SocketCAN can0 at 1 Mbps
+After=network-pre.target
+Wants=network-pre.target
+Before=rebot-driver.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ip link set can0 down
+ExecStart=/usr/sbin/ip link set can0 up type can bitrate 1000000
+ExecStop=/usr/sbin/ip link set can0 down
+TimeoutStartSec=15
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

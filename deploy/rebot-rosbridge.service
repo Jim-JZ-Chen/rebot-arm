@@ -1,0 +1,16 @@
+[Unit]
+Description=rosbridge WebSocket for reBot console
+After=rebot-driver.service
+
+[Service]
+Type=simple
+User=__REBOT_USER__
+WorkingDirectory=__REBOT_WORKSPACE__
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source __REBOT_WORKSPACE__/install/setup.bash && exec ros2 run rosbridge_server rosbridge_websocket'
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,327 @@
+import { onBeforeUnmount, ref } from 'vue'
+import { RebotRosClient } from '@/lib/rosClient'
+import type { ArmStatus, ConnectionState, LogEntry, LogLevel, RunState, SequenceStep } from '@/lib/robot'
+import { READY_POSE, ZERO_POSE } from '@/lib/robot'
+
+const initialLog: LogEntry = {
+  id: 1,
+  time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+  message: '浏览器演示已就绪；连接 ROS 2 前不会发送任何硬件命令。',
+  level: 'info',
+}
+
+export function useRebot() {
+  const client = new RebotRosClient()
+  let busy = false
+  let generation = 0
+  let demoReject: ((reason: Error) => void) | null = null
+  let feedbackTimes: number[] = []
+  let currentSnapshot = [...READY_POSE]
+
+  const mode = ref<'demo' | 'ros'>('demo')
+  const connection = ref<ConnectionState>('disconnected')
+  const url = ref(localStorage.getItem('rebot.rosbridge.url') || 'ws://localhost:9090')
+  const namespace = ref(localStorage.getItem('rebot.namespace') || '/rebotarm')
+  const current = ref<number[]>([...READY_POSE])
+  const target = ref<number[]>([...READY_POSE])
+  const gripperRaw = ref(5)
+  const armStatus = ref<ArmStatus>({ enabled: true, state_machine: 'DEMO', error_code: 0 })
+  const runState = ref<RunState>('idle')
+  const activeStep = ref<number | null>(null)
+  const logs = ref<LogEntry[]>([initialLog])
+  const feedbackRate = ref(0)
+  const lastFeedback = ref<number | null>(null)
+  const safetyConfirmed = ref(false)
+
+  const updateCurrent = (positions: number[]) => {
+    currentSnapshot = [...positions]
+    current.value = positions
+  }
+
+  const appendLog = (message: string, level: LogLevel = 'info') => {
+    logs.value = [
+      ...logs.value.slice(-79),
+      {
+        id: Date.now() + Math.random(),
+        time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        message,
+        level,
+      },
+    ]
+  }
+
+  const clearLogs = () => {
+    logs.value = []
+  }
+
+  const disconnect = () => {
+    generation += 1
+    demoReject?.(new Error('连接已断开'))
+    demoReject = null
+    client.disconnect()
+    busy = false
+    connection.value = 'disconnected'
+    feedbackRate.value = 0
+    lastFeedback.value = null
+    runState.value = 'idle'
+    activeStep.value = null
+  }
+
+  const connect = () => {
+    const trimmedUrl = url.value.trim()
+    const trimmedNamespace = namespace.value.trim()
+    if (!/^wss?:\/\//.test(trimmedUrl)) {
+      connection.value = 'error'
+      appendLog('rosbridge 地址必须以 ws:// 或 wss:// 开头。', 'error')
+      return
+    }
+    localStorage.setItem('rebot.rosbridge.url', trimmedUrl)
+    localStorage.setItem('rebot.namespace', trimmedNamespace)
+    mode.value = 'ros'
+    safetyConfirmed.value = false
+    armStatus.value = {}
+    connection.value = 'connecting'
+    appendLog(`正在连接 ${trimmedUrl} …`)
+    try {
+      client.connect(trimmedUrl, trimmedNamespace, {
+        onConnection: (state, detail) => {
+          connection.value = state
+          if (state === 'connected') appendLog(`rosbridge 已连接，命名空间 ${trimmedNamespace}。`, 'success')
+          if (state === 'disconnected') appendLog('rosbridge 连接已关闭。', 'warning')
+          if (state === 'error') appendLog(`连接错误：${detail || '请检查 rosbridge 是否已启动'}`, 'error')
+        },
+        onJoints: (positions, rawGripper) => {
+          updateCurrent(positions)
+          if (typeof rawGripper === 'number') gripperRaw.value = rawGripper
+          const now = performance.now()
+          feedbackTimes = [...feedbackTimes.filter((time) => now - time < 1000), now]
+          feedbackRate.value = feedbackTimes.length
+          lastFeedback.value = Date.now()
+        },
+        onArmStatus: (status) => {
+          armStatus.value = status
+        },
+      })
+    } catch (error) {
+      connection.value = 'error'
+      appendLog(`连接失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
+  }
+
+  const switchMode = (next: 'demo' | 'ros') => {
+    disconnect()
+    mode.value = next
+    safetyConfirmed.value = false
+    if (next === 'demo') {
+      updateCurrent([...READY_POSE])
+      target.value = [...READY_POSE]
+      gripperRaw.value = 5
+      armStatus.value = { enabled: true, state_machine: 'DEMO', error_code: 0 }
+      appendLog('已切换到浏览器演示；所有运动仅在本地模拟。')
+    } else {
+      armStatus.value = {}
+      appendLog('已切换到 ROS 2 模式，请连接本机 rosbridge。')
+    }
+  }
+
+  const ensureMotionAllowed = () => {
+    if (mode.value === 'demo') return
+    if (connection.value !== 'connected') throw new Error('请先连接 rosbridge')
+    if (!safetyConfirmed.value) throw new Error('请先确认工作区无人、无障碍且物理急停可用')
+  }
+
+  const demoTrajectory = (positions: number[], duration: number, token: number) => {
+    return new Promise<void>((resolve, reject) => {
+      const start = [...currentSnapshot]
+      const startedAt = performance.now()
+      const demoDuration = Math.min(3200, Math.max(650, duration * 650))
+      demoReject = reject
+      const frame = (now: number) => {
+        if (generation !== token) {
+          demoReject = null
+          reject(new Error('任务已取消'))
+          return
+        }
+        const linear = Math.min(1, (now - startedAt) / demoDuration)
+        const eased = 1 - Math.pow(1 - linear, 3)
+        updateCurrent(start.map((value, index) => value + (positions[index] - value) * eased))
+        if (linear < 1) {
+          requestAnimationFrame(frame)
+        } else {
+          demoReject = null
+          updateCurrent(positions)
+          resolve()
+        }
+      }
+      requestAnimationFrame(frame)
+    })
+  }
+
+  const performTrajectory = async (positions: number[], duration: number, token: number) => {
+    ensureMotionAllowed()
+    if (mode.value === 'demo') await demoTrajectory(positions, duration, token)
+    else await client.sendTrajectory(positions, duration)
+    if (generation !== token) throw new Error('任务已取消')
+  }
+
+  const delay = (seconds: number, token: number) => {
+    return new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        demoReject = null
+        if (generation !== token) reject(new Error('任务已取消'))
+        else resolve()
+      }, Math.max(0, seconds * 1000))
+      demoReject = (reason) => {
+        window.clearTimeout(timer)
+        reject(reason)
+      }
+    })
+  }
+
+  const performGripper = async (action: 'open' | 'close', token: number) => {
+    ensureMotionAllowed()
+    if (mode.value === 'demo') {
+      await delay(0.55, token)
+      if (generation === token) gripperRaw.value = action === 'open' ? 5 : 0
+    } else {
+      await client.setGripper(action)
+    }
+    if (generation !== token) throw new Error('任务已取消')
+  }
+
+  const performHome = async (token: number) => {
+    ensureMotionAllowed()
+    if (mode.value === 'demo') await demoTrajectory(ZERO_POSE, 3, token)
+    else await client.safeHome()
+    if (generation !== token) throw new Error('任务已取消')
+  }
+
+  const beginTask = () => {
+    if (busy) throw new Error('已有任务正在执行')
+    busy = true
+    generation += 1
+    runState.value = 'running'
+    return generation
+  }
+
+  const endTask = (token: number, state: RunState) => {
+    if (generation !== token) return
+    busy = false
+    runState.value = state
+    activeStep.value = null
+  }
+
+  const executeTrajectory = async (positions = target.value, duration = 3) => {
+    let token = 0
+    try {
+      ensureMotionAllowed()
+      token = beginTask()
+      appendLog(`开始执行关节轨迹，时长 ${duration.toFixed(1)} 秒。`)
+      await performTrajectory(positions, duration, token)
+      endTask(token, 'success')
+      appendLog('关节轨迹执行完成。', 'success')
+    } catch (error) {
+      if (token) endTask(token, 'error')
+      appendLog(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  const runSingleService = async (kind: 'enable' | 'disable' | 'home' | 'open' | 'close') => {
+    let token = 0
+    try {
+      ensureMotionAllowed()
+      token = beginTask()
+      const labels = { enable: '启用机械臂', disable: '安全禁用', home: '安全回零', open: '张开夹爪', close: '闭合夹爪' }
+      appendLog(`请求：${labels[kind]}。`)
+      if (kind === 'enable') {
+        if (mode.value === 'demo') await delay(0.35, token)
+        else await client.enable()
+        if (mode.value === 'demo') armStatus.value = { ...armStatus.value, enabled: true }
+      } else if (kind === 'disable') {
+        if (mode.value === 'demo') await demoTrajectory(ZERO_POSE, 2, token)
+        else await client.disable()
+        if (mode.value === 'demo') armStatus.value = { ...armStatus.value, enabled: false }
+      } else if (kind === 'home') {
+        await performHome(token)
+      } else {
+        await performGripper(kind, token)
+      }
+      endTask(token, 'success')
+      appendLog(`${labels[kind]}完成。`, 'success')
+    } catch (error) {
+      if (token) endTask(token, 'error')
+      appendLog(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  const runSequence = async (steps: SequenceStep[]) => {
+    if (!steps.length) {
+      appendLog('序列为空，请先添加步骤。', 'warning')
+      return
+    }
+    let token = 0
+    try {
+      ensureMotionAllowed()
+      token = beginTask()
+      appendLog(`开始执行序列，共 ${steps.length} 步。`)
+      for (let index = 0; index < steps.length; index += 1) {
+        if (generation !== token) throw new Error('任务已取消')
+        activeStep.value = index
+        const step = steps[index]
+        appendLog(`步骤 ${index + 1}/${steps.length}：${step.name}`)
+        if (step.type === 'joint') await performTrajectory(step.positions, step.duration, token)
+        if (step.type === 'gripper') await performGripper(step.action, token)
+        if (step.type === 'wait') await delay(step.duration, token)
+        if (step.type === 'home') await performHome(token)
+      }
+      endTask(token, 'success')
+      appendLog('动作序列全部完成。', 'success')
+    } catch (error) {
+      if (token) endTask(token, 'error')
+      appendLog(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  const cancelTask = () => {
+    if (!busy) return
+    generation += 1
+    client.cancelTrajectory()
+    demoReject?.(new Error('任务已取消'))
+    demoReject = null
+    busy = false
+    runState.value = 'cancelling'
+    activeStep.value = null
+    appendLog('已取消网页任务；这不是物理急停。', 'warning')
+  }
+
+  onBeforeUnmount(() => {
+    generation += 1
+    demoReject?.(new Error('面板已关闭'))
+    client.disconnect()
+  })
+
+  return {
+    mode,
+    connection,
+    url,
+    namespace,
+    current,
+    target,
+    gripperRaw,
+    armStatus,
+    runState,
+    activeStep,
+    logs,
+    feedbackRate,
+    lastFeedback,
+    safetyConfirmed,
+    clearLogs,
+    connect,
+    disconnect,
+    switchMode,
+    executeTrajectory,
+    runSingleService,
+    runSequence,
+    cancelTask,
+  }
+}

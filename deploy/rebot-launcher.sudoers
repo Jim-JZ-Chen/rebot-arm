@@ -1,0 +1,7 @@
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start rebot-can.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop rebot-can.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start rebot-driver.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop rebot-driver.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start rebot-rosbridge.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop rebot-rosbridge.service
+__REBOT_USER__ ALL=(root) NOPASSWD: /usr/sbin/shutdown -h now
