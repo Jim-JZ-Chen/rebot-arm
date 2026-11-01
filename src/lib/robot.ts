@@ -29,7 +29,7 @@ export interface LogEntry {
 export type SequenceStep =
   | { id: string; type: 'joint'; name: string; positions: number[]; duration: number }
   | { id: string; type: 'pose'; name: string; position: number[]; rpy: number[]; duration: number }
-  | { id: string; type: 'gripper'; name: string; action: 'open' | 'close' }
+  | { id: string; type: 'gripper'; name: string; action?: 'open' | 'close'; position?: number }
   | { id: string; type: 'wait'; name: string; duration: number }
   | { id: string; type: 'home'; name: string }
 
@@ -83,7 +83,10 @@ export function rpyToQuat(rpy: number[]): Quaternion {
 export function stepSummary(step: SequenceStep) {
   if (step.type === 'joint') return `${step.duration.toFixed(1)} s · ${step.positions.map(formatDeg).join(' / ')}`
   if (step.type === 'pose') return `${step.duration.toFixed(1)} s · XYZ ${step.position.map((v) => v.toFixed(2)).join(' / ')} m`
-  if (step.type === 'gripper') return step.action === 'open' ? 'GRIPPER OPEN' : 'GRIPPER CLOSE'
+  if (step.type === 'gripper') {
+    if (typeof step.position === 'number') return `GRIPPER ${step.position.toFixed(1)} / 5`
+    return step.action === 'close' ? 'GRIPPER CLOSE' : 'GRIPPER OPEN'
+  }
   if (step.type === 'wait') return `${step.duration.toFixed(1)} s`
   return 'SAFE HOME'
 }

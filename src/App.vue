@@ -71,6 +71,7 @@
         @update:target="updateTarget"
         @execute="executeTrajectory"
         @service="runSingleService"
+        @gripper="runGripper"
       />
 
       <section class="center-workspace" aria-label="实时模型与反馈">

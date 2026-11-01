@@ -91,12 +91,23 @@
         <label>时长（秒）<input type="number" :min="0.2" :step="0.2" :value="selected.duration" @input="updateDuration(Number(inputValue($event)))" /></label>
         <p class="section-note">目标为末端位姿（base_link 参考系），IK 由驱动解算；目标不可达或求解失败会报错。演示模式无 IK，仅模拟耗时。</p>
       </template>
-      <label v-if="selected.type === 'gripper'">夹爪动作
-        <select :value="selected.action" @change="updateGripperAction(inputValue($event) as 'open' | 'close')">
-          <option value="open">张开</option>
-          <option value="close">闭合</option>
-        </select>
-      </label>
+      <template v-if="selected.type === 'gripper'">
+        <label>开度（0 = 闭合 · 5 = 张开）
+          <div class="gripper-slider-row">
+            <input
+              class="joint-slider"
+              type="range"
+              :min="0"
+              :max="5"
+              :step="0.1"
+              :value="selected.position ?? (selected.action === 'close' ? 0 : 5)"
+              @input="updateGripperPosition(Number(inputValue($event)))"
+            />
+            <strong>{{ (selected.position ?? (selected.action === 'close' ? 0 : 5)).toFixed(1) }}</strong>
+          </div>
+        </label>
+        <p class="section-note">经 gripper/command Action 执行，驱动按位置控制到位；夹到异物导致堵转会报错。</p>
+      </template>
       <label v-if="selected.type === 'wait'">等待（秒）<input type="number" :min="0" :step="0.2" :value="selected.duration" @input="updateDuration(Number(inputValue($event)))" /></label>
       <p v-if="selected.type === 'home'" class="section-note">调用控制器的安全回零服务，并等待成功或失败结果。</p>
     </section>
@@ -224,9 +235,11 @@ export default defineComponent({
       if (step?.type === 'joint' || step?.type === 'pose') this.updateSelected({ ...step, duration: Math.max(0.2, value) })
       if (step?.type === 'wait') this.updateSelected({ ...step, duration: Math.max(0, value) })
     },
-    updateGripperAction(action: 'open' | 'close') {
+    updateGripperPosition(value: number) {
       const step = this.selected
-      if (step?.type === 'gripper') this.updateSelected({ ...step, action })
+      if (step?.type !== 'gripper') return
+      const position = Math.max(0, Math.min(5, value))
+      this.updateSelected({ ...step, position })
     },
     setNewType(value: string) {
       this.newType = value as SequenceStep['type']
@@ -237,7 +250,7 @@ export default defineComponent({
       let step: SequenceStep
       if (this.newType === 'joint') step = { ...base, type: 'joint', positions: [...READY_POSE], duration: 3 }
       else if (this.newType === 'pose') step = { ...base, type: 'pose', position: [...DEFAULT_POSE_POSITION], rpy: [...DEFAULT_POSE_RPY], duration: 3 }
-      else if (this.newType === 'gripper') step = { ...base, type: 'gripper', action: 'open' }
+      else if (this.newType === 'gripper') step = { ...base, type: 'gripper', position: 5 }
       else if (this.newType === 'wait') step = { ...base, type: 'wait', duration: 1 }
       else step = { ...base, type: 'home' }
       this.steps = [...this.steps, step]

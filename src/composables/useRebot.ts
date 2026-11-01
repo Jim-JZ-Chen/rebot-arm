@@ -261,13 +261,14 @@ export function useRebot() {
     })
   }
 
-  const performGripper = async (action: 'open' | 'close', token: number) => {
+  const performGripper = async (position: number, token: number) => {
     ensureMotionAllowed()
+    const target = Math.max(0, Math.min(5, position))
     if (mode.value === 'demo') {
       await delay(0.55, token)
-      if (generation === token) gripperRaw.value = action === 'open' ? 5 : 0
+      if (generation === token) gripperRaw.value = target
     } else {
-      await client.setGripper(action)
+      await client.setGripper(target)
     }
     if (generation !== token) throw new Error('任务已取消')
   }
@@ -338,10 +339,25 @@ export function useRebot() {
       } else if (kind === 'home') {
         await performHome(token)
       } else {
-        await performGripper(kind, token)
+        await performGripper(kind === 'open' ? 5 : 0, token)
       }
       endTask(token, 'success')
       appendLog(`${labels[kind]}完成。`, 'success')
+    } catch (error) {
+      if (token) endTask(token, 'error')
+      appendLog(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  const runGripper = async (position: number) => {
+    let token = 0
+    try {
+      ensureMotionAllowed()
+      token = beginTask()
+      appendLog(`请求：夹爪开到 ${position.toFixed(1)} / 5。`)
+      await performGripper(position, token)
+      endTask(token, 'success')
+      appendLog('夹爪到位。', 'success')
     } catch (error) {
       if (token) endTask(token, 'error')
       appendLog(error instanceof Error ? error.message : String(error), 'error')
@@ -365,7 +381,7 @@ export function useRebot() {
         appendLog(`步骤 ${index + 1}/${steps.length}：${step.name}`)
         if (step.type === 'joint') await performTrajectory(step.positions, step.duration, token)
         if (step.type === 'pose') await performPose(step, token)
-        if (step.type === 'gripper') await performGripper(step.action, token)
+        if (step.type === 'gripper') await performGripper(step.position ?? (step.action === 'close' ? 0 : 5), token)
         if (step.type === 'wait') await delay(step.duration, token)
         if (step.type === 'home') await performHome(token)
       }
@@ -420,6 +436,7 @@ export function useRebot() {
     switchMode,
     executeTrajectory,
     runSingleService,
+    runGripper,
     runSequence,
     cancelTask,
   }

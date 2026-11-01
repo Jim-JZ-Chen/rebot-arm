@@ -78,6 +78,20 @@
         <div class="gripper-track"><span :style="{ width: `${(gripperWidth / 71.5) * 100}%` }" /></div>
         <strong>{{ gripperWidth.toFixed(1) }} mm</strong>
       </div>
+      <div class="gripper-target">
+        <input
+          v-model.number="gripperTarget"
+          class="joint-slider"
+          type="range"
+          aria-label="夹爪目标开度"
+          :min="0"
+          :max="5"
+          :step="0.1"
+        />
+        <button type="button" :disabled="busy || controlsDisabled" @click="executeGripper">
+          <Hand :size="14" />执行 {{ Number(gripperTarget).toFixed(1) }}
+        </button>
+      </div>
       <button type="button" class="disable-button" :disabled="busy || controlsDisabled" @click="$emit('service', 'disable')">
         <RotateCcw :size="15" />安全回零并禁用
       </button>
@@ -113,7 +127,7 @@ export default defineComponent({
     runState: { type: String as PropType<RunState>, required: true },
     controlsDisabled: { type: Boolean, required: true },
   },
-  emits: ['update:target', 'execute', 'service'],
+  emits: ['update:target', 'execute', 'service', 'gripper'],
   data() {
     return {
       JOINT_NAMES,
@@ -121,6 +135,7 @@ export default defineComponent({
       ZERO_POSE,
       READY_POSE,
       OBSERVE_POSE,
+      gripperTarget: 5,
     }
   },
   computed: {
@@ -154,6 +169,11 @@ export default defineComponent({
       next[index] = clampJoint(index, next[index] + degToRad(deltaDeg))
       this.setTarget(next)
       this.$emit('execute', next, 0.8)
+    },
+    executeGripper() {
+      const position = Math.max(0, Math.min(5, Number(this.gripperTarget) || 0))
+      this.gripperTarget = position
+      this.$emit('gripper', position)
     },
   },
 })

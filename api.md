@@ -87,26 +87,31 @@
 请求为空 `{}`，响应格式同 1.3。驱动侧行为：先停止重力补偿，夹爪闭合到 0 rad，再以安全速度回零。
 注意：这是**回到零位姿态**，不是 `set_zero`（改写电机零点）——本面板刻意不提供后者。
 
-### 1.6 Service：夹爪开合
+### 1.6 Action：夹爪开度控制
 
 | 项 | 值 |
 | --- | --- |
-| 名称 | `<ns>/gripper/open`、`<ns>/gripper/close` |
-| 类型 | `rebotarm_msgs/srv/GripperCommand`（厂商自定义） |
-| 前端超时 | 10 秒 |
+| 名称 | `<ns>/gripper/command` |
+| 类型 | `control_msgs/action/GripperCommand`（标准 action） |
+| 前端超时 | 25 秒（驱动侧位置控制循环最长约 5 秒） |
 
-请求字段（RS 型号，开 5、闭 0，见 SDK `rebotarm_hardware.yaml`）：
+夹爪支持 0~5 rad 连续开度（RS 型号，0 = 闭合，5 = 张开），驱动按模型范围校验，越界拒绝。
+前端发送：
 
 ```json
-{ "position": 5, "timeout": 5 }
+{ "command": { "position": 2.5, "max_effort": 0 } }
 ```
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `position` | float | 目标夹爪电机角度（rad）：张开 `5`，闭合 `0`；传 `0.0` 表示用驱动配置的默认位置 |
-| `timeout` | float | 驱动侧到位超时（秒），前端固定传 `5`；≤0 用驱动默认超时 |
+`max_effort` 是标准字段但当前驱动实现不使用（不做力矩限制）。执行期间驱动在 Feedback 中
+持续回报 `position` / `effort` / `stalled` / `reached_goal`。Result 判定：
 
-响应：`{ "success": bool, "reached_position": float, "message": string }`，`success: false` 时前端报错。该接口为纯位置控制，**不做力反馈夹取判断**。
+| 字段 | 含义 |
+| --- | --- |
+| `reached_goal` | 是否在限时内到达目标；`false` 时前端报错 |
+| `stalled` | 是否堵转（位置不再变化且 effort 超限），前端报"夹爪堵转" |
+| `position` / `effort` | 结束时实际位置与力矩 |
+
+该接口为位置控制，**不做力反馈夹取判断**；`stalled` 只能作为"夹到异物"的粗略指示。
 
 ### 1.7 Action：关节轨迹执行
 
@@ -351,7 +356,7 @@ Content-Type: application/json
 | --- | --- | --- |
 | `joint` | `positions: number[6]`（rad）、`duration: number`（s） | 发送 FollowJointTrajectory 单点轨迹 |
 | `pose` | `position: number[3]`（m，XYZ）、`rpy: number[3]`（rad，ZYX 欧拉角）、`duration: number`（s） | 发送 MoveToPose 末端位姿 action，IK 由驱动解算 |
-| `gripper` | `action: "open" \| "close"` | 调用夹爪服务 |
+| `gripper` | 可选 `position: number`（0~5 rad）、可选 `action: "open" \| "close"` | 经 GripperCommand action 控制开度；无 `position` 时按旧字段 `action` 取 5 或 0（仅兼容旧序列） |
 | `wait` | `duration: number`（s） | 纯等待，不发任何指令 |
 | `home` | — | 调用安全回零服务 |
 
@@ -393,13 +398,13 @@ localStorage 键：`rebot.rosbridge.url`、`rebot.namespace` 保存连接配置�
 | Service | `<ns>/set_zero` | `rebotarm_msgs/srv/SetZero` | 设置关节零点（危险，刻意不用） | — |
 | Service | `<ns>/move_to_pose_ik` | `rebotarm_msgs/srv/MoveToPoseIK` | IK 预检查与关节角求解 | — |
 | Service | `<ns>/gripper/set` | `rebotarm_msgs/srv/SetGripper` | 设置夹爪电机位置 | — |
-| Service | `<ns>/gripper/open` | `rebotarm_msgs/srv/GripperCommand` | 打开夹爪 | ✅ |
-| Service | `<ns>/gripper/close` | `rebotarm_msgs/srv/GripperCommand` | 闭合夹爪 | ✅ |
+| Service | `<ns>/gripper/open` | `rebotarm_msgs/srv/GripperCommand` | 打开夹爪 | — |
+| Service | `<ns>/gripper/close` | `rebotarm_msgs/srv/GripperCommand` | 闭合夹爪 | — |
 | Service | `<ns>/gravity_compensation/start` | `std_srvs/srv/Trigger` | 启动重力补偿 | — |
 | Service | `<ns>/gravity_compensation/stop` | `std_srvs/srv/Trigger` | 停止重力补偿 | — |
 | Action | `<ns>/move_to_pose` | `rebotarm_msgs/action/MoveToPose` | 末端位姿轨迹 | ✅ |
 | Action | `<ns>/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | 标准关节轨迹 | ✅ |
-| Action | `<ns>/gripper/command` | `control_msgs/action/GripperCommand` | 标准夹爪 action | — |
+| Action | `<ns>/gripper/command` | `control_msgs/action/GripperCommand` | 标准夹爪 action | ✅ |
 | Command Topic | `<ns>/joints/<joint>/cmd/mit` | `rebotarm_msgs/msg/JointMitCmd` | 单关节 MIT raw command | — |
 | Command Topic | `<ns>/joints/<joint>/cmd/pos_vel` | `rebotarm_msgs/msg/JointPosVelCmd` | 单关节位置速度 raw command | — |
 | Command Topic | `<ns>/joints/<joint>/cmd/vel` | `rebotarm_msgs/msg/JointVelCmd` | 单关节速度 raw command | — |
@@ -551,14 +556,14 @@ ros2 service call /rebotarm/move_to_pose_ik rebotarm_msgs/srv/MoveToPoseIK \
 请求：`{ "position": float64, "max_effort": float64（预留，当前不用） }`
 响应：`{ "success": bool, "reached_position": float64 }`
 
-### 8.8 `<ns>/gripper/open` ✅
+### 8.8 `<ns>/gripper/open`
 
 `rebotarm_msgs/srv/GripperCommand`。位置控制打开夹爪。`position` 为目标电机角度 rad；传 `0.0` 使用配置的默认打开位置。`timeout` ≤ 0 使用默认超时。
 
 请求：`{ "position": float64, "timeout": float64 }`
 响应：`{ "success": bool, "reached_position": float64, "message": string }`
 
-### 8.9 `<ns>/gripper/close` ✅
+### 8.9 `<ns>/gripper/close`
 
 `rebotarm_msgs/srv/GripperCommand`。位置控制闭合夹爪，字段同 open。**不做力反馈夹取判断**。
 
@@ -597,7 +602,7 @@ ros2 action send_goal /rebotarm/move_to_pose rebotarm_msgs/action/MoveToPose \
 - 每个 point 必须包含完整 `positions`；
 - point 之间按时间线性更新关节目标，不做 IK 或 URDF 限位校验。
 
-### 9.3 `<ns>/gripper/command`
+### 9.3 `<ns>/gripper/command` ✅
 
 `control_msgs/action/GripperCommand`（标准 action）。适合行为树、任务编排或 MoveIt 风格接口。`command.position` 单位 rad，按模型范围校验；`command.max_effort` 为标准字段但当前实现不用它做力矩限制。
 

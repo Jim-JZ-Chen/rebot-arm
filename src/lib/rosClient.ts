@@ -43,6 +43,20 @@ interface PoseResult {
   final_pose?: unknown
 }
 
+interface GripperCommandGoal {
+  command: {
+    position: number
+    max_effort: number
+  }
+}
+
+interface GripperActionResult {
+  position?: number
+  effort?: number
+  stalled?: boolean
+  reached_goal?: boolean
+}
+
 export class RebotRosClient {
   private ros: ROSLIB.Ros | null = null
   private namespace = '/rebotarm'
@@ -257,12 +271,27 @@ export class RebotRosClient {
     return this.callService(`${this.namespace}/safe_home`, 'std_srvs/srv/Trigger', {}, 30000)
   }
 
-  setGripper(action: 'open' | 'close') {
-    return this.callService(
-      `${this.namespace}/gripper/${action}`,
-      'rebotarm_msgs/srv/GripperCommand',
-      { position: action === 'open' ? 5 : 0, timeout: 5 },
-      10000,
+  /**
+   * 经标准 control_msgs/action/GripperCommand 控制夹爪开度（0 = 闭合，5 = 张开，单位 rad）。
+   * 驱动侧位置控制循环最长执行约 5 秒，超时上限留足余量。
+   */
+  setGripper(position: number, maxEffort = 0) {
+    const goal: GripperCommandGoal = { command: { position, max_effort: maxEffort } }
+    return this.runAction<GripperCommandGoal, GripperActionResult>(
+      `${this.namespace}/gripper/command`,
+      'control_msgs/action/GripperCommand',
+      goal,
+      25000,
+      (result) => {
+        if (!result) return null
+        if (result.reached_goal === false) {
+          const actual = typeof result.position === 'number' ? result.position.toFixed(2) : '未知'
+          return result.stalled
+            ? `夹爪堵转，未到达目标（实际位置 ${actual}）`
+            : `夹爪未在限时内到达目标（实际位置 ${actual}）`
+        }
+        return null
+      },
     )
   }
 
