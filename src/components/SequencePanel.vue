@@ -36,6 +36,7 @@
       <div class="add-step-row">
         <select aria-label="新步骤类型" :value="newType" @change="setNewType(inputValue($event))">
           <option value="joint">关节轨迹</option>
+          <option value="pose">末端位姿</option>
           <option value="gripper">夹爪动作</option>
           <option value="wait">等待</option>
           <option value="home">安全回零</option>
@@ -66,6 +67,30 @@
         </div>
         <label>时长（秒）<input type="number" :min="0.2" :step="0.2" :value="selected.duration" @input="updateDuration(Number(inputValue($event)))" /></label>
       </template>
+      <template v-if="selected.type === 'pose'">
+        <div class="editor-joint-grid">
+          <label v-for="(axis, index) in ['X', 'Y', 'Z']" :key="axis">{{ axis }}（m）
+            <input
+              type="number"
+              :step="0.01"
+              :value="selected.position[index]"
+              @input="updatePosePosition(index, Number(inputValue($event)))"
+            />
+          </label>
+        </div>
+        <div class="editor-joint-grid">
+          <label v-for="(axis, index) in ['ROLL', 'PITCH', 'YAW']" :key="axis">{{ axis }} °
+            <input
+              type="number"
+              :step="1"
+              :value="Number(radToDeg(selected.rpy[index]).toFixed(1))"
+              @input="updatePoseRpy(index, Number(inputValue($event)))"
+            />
+          </label>
+        </div>
+        <label>时长（秒）<input type="number" :min="0.2" :step="0.2" :value="selected.duration" @input="updateDuration(Number(inputValue($event)))" /></label>
+        <p class="section-note">目标为末端位姿（base_link 参考系），IK 由驱动解算；目标不可达或求解失败会报错。演示模式无 IK，仅模拟耗时。</p>
+      </template>
       <label v-if="selected.type === 'gripper'">夹爪动作
         <select :value="selected.action" @change="updateGripperAction(inputValue($event) as 'open' | 'close')">
           <option value="open">张开</option>
@@ -95,6 +120,8 @@ import type { PropType } from 'vue'
 import { ChevronDown, ChevronUp, Download, Play, Plus, Square, Trash2, Upload } from '@lucide/vue'
 import type { LogEntry, RunState, SequenceStep } from '@/lib/robot'
 import {
+  DEFAULT_POSE_POSITION,
+  DEFAULT_POSE_RPY,
   DEFAULT_SEQUENCE,
   READY_POSE,
   degToRad,
@@ -178,9 +205,23 @@ export default defineComponent({
       positions[index] = degToRad(value)
       this.updateSelected({ ...step, positions })
     },
+    updatePosePosition(index: number, value: number) {
+      const step = this.selected
+      if (step?.type !== 'pose') return
+      const position = [...step.position]
+      position[index] = value
+      this.updateSelected({ ...step, position })
+    },
+    updatePoseRpy(index: number, value: number) {
+      const step = this.selected
+      if (step?.type !== 'pose') return
+      const rpy = [...step.rpy]
+      rpy[index] = degToRad(value)
+      this.updateSelected({ ...step, rpy })
+    },
     updateDuration(value: number) {
       const step = this.selected
-      if (step?.type === 'joint') this.updateSelected({ ...step, duration: Math.max(0.2, value) })
+      if (step?.type === 'joint' || step?.type === 'pose') this.updateSelected({ ...step, duration: Math.max(0.2, value) })
       if (step?.type === 'wait') this.updateSelected({ ...step, duration: Math.max(0, value) })
     },
     updateGripperAction(action: 'open' | 'close') {
@@ -195,6 +236,7 @@ export default defineComponent({
       const base = { id, name: `新步骤 ${this.steps.length + 1}` }
       let step: SequenceStep
       if (this.newType === 'joint') step = { ...base, type: 'joint', positions: [...READY_POSE], duration: 3 }
+      else if (this.newType === 'pose') step = { ...base, type: 'pose', position: [...DEFAULT_POSE_POSITION], rpy: [...DEFAULT_POSE_RPY], duration: 3 }
       else if (this.newType === 'gripper') step = { ...base, type: 'gripper', action: 'open' }
       else if (this.newType === 'wait') step = { ...base, type: 'wait', duration: 1 }
       else step = { ...base, type: 'home' }

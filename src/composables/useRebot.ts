@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { RebotRosClient } from '@/lib/rosClient'
 import type { ArmStatus, ConnectionState, InterfaceCall, LogEntry, LogLevel, RunState, SequenceStep, TopicStat, TrafficEvent } from '@/lib/robot'
-import { READY_POSE, ZERO_POSE } from '@/lib/robot'
+import { READY_POSE, ZERO_POSE, rpyToQuat } from '@/lib/robot'
 
 const initialLog: LogEntry = {
   id: 1,
@@ -279,6 +279,17 @@ export function useRebot() {
     if (generation !== token) throw new Error('任务已取消')
   }
 
+  const performPose = async (step: Extract<SequenceStep, { type: 'pose' }>, token: number) => {
+    ensureMotionAllowed()
+    if (mode.value === 'demo') {
+      // 演示模式无 IK 能力，机械臂保持不动，仅按真实时长模拟执行耗时
+      await delay(step.duration, token)
+    } else {
+      await client.moveToPose(step.position, rpyToQuat(step.rpy), step.duration)
+    }
+    if (generation !== token) throw new Error('任务已取消')
+  }
+
   const beginTask = () => {
     if (busy) throw new Error('已有任务正在执行')
     busy = true
@@ -353,6 +364,7 @@ export function useRebot() {
         const step = steps[index]
         appendLog(`步骤 ${index + 1}/${steps.length}：${step.name}`)
         if (step.type === 'joint') await performTrajectory(step.positions, step.duration, token)
+        if (step.type === 'pose') await performPose(step, token)
         if (step.type === 'gripper') await performGripper(step.action, token)
         if (step.type === 'wait') await delay(step.duration, token)
         if (step.type === 'home') await performHome(token)

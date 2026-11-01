@@ -1,6 +1,6 @@
 import * as ROSLIB from 'roslib'
 import { JOINT_NAMES } from './robot'
-import type { TrafficEvent } from './robot'
+import type { Quaternion, TrafficEvent } from './robot'
 
 interface RosEvents {
   onConnection: (state: 'connected' | 'disconnected' | 'error', detail?: string) => void
@@ -27,6 +27,20 @@ interface TrajectoryGoal {
 interface TrajectoryResult {
   error_code?: number
   error_string?: string
+}
+
+interface PoseGoal {
+  target_pose: {
+    position: { x: number; y: number; z: number }
+    orientation: Quaternion
+  }
+  duration: number
+}
+
+interface PoseResult {
+  success?: boolean
+  message?: string
+  final_pose?: unknown
 }
 
 export class RebotRosClient {
@@ -164,6 +178,73 @@ export class RebotRosClient {
     })
   }
 
+  /**
+   * 发送一个 Action goal 并等待结果，统一处理超时、取消和流量上报。
+   * interpret 返回 null 表示成功，返回字符串表示业务失败原因。
+   */
+  private runAction<TGoal, TResult>(
+    name: string,
+    actionType: string,
+    goal: TGoal,
+    timeoutMs: number,
+    interpret: (result: TResult | undefined) => string | null,
+  ): Promise<void> {
+    if (!this.ros) return Promise.reject(new Error('尚未连接 rosbridge'))
+    this.cancelTrajectory()
+    const ros = this.ros
+    const action = new ROSLIB.Action<TGoal, unknown, TResult>({ ros, name, actionType })
+    const callId = ++this.callSeq
+    const startedAt = Date.now()
+    this.traffic?.({ kind: 'call-start', id: callId, category: 'action', name, type: actionType, request: goal, at: startedAt })
+    const endTraffic = (status: 'success' | 'error', response?: unknown, error?: string) => {
+      this.traffic?.({ kind: 'call-end', id: callId, status, response, error, durationMs: Date.now() - startedAt })
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      let goalId: string | undefined
+      const finish = () => {
+        window.clearTimeout(timer)
+        if (goalId) ros.off(goalId)
+        this.cancelActive = null
+      }
+      const timer = window.setTimeout(() => {
+        if (goalId) action.cancelGoal(goalId)
+        finish()
+        endTraffic('error', undefined, '动作执行超时，已请求取消')
+        reject(new Error('动作执行超时，已请求取消'))
+      }, timeoutMs)
+
+      goalId = action.sendGoal(
+        goal,
+        (result) => {
+          finish()
+          const error = interpret(result)
+          endTraffic(error ? 'error' : 'success', result, error || undefined)
+          if (error) reject(new Error(error))
+          else resolve()
+        },
+        undefined,
+        (error) => {
+          finish()
+          endTraffic('error', undefined, error || '动作目标被动作服务器拒绝')
+          reject(new Error(error || '动作目标被动作服务器拒绝'))
+        },
+      )
+      if (!goalId) {
+        finish()
+        endTraffic('error', undefined, '无法发送动作目标')
+        reject(new Error('无法发送动作目标'))
+        return
+      }
+      this.cancelActive = () => {
+        if (goalId) action.cancelGoal(goalId)
+        finish()
+        endTraffic('error', undefined, '任务已取消')
+        reject(new Error('任务已取消'))
+      }
+    })
+  }
+
   enable() {
     return this.callService(`${this.namespace}/enable`, 'std_srvs/srv/Trigger', {})
   }
@@ -186,17 +267,7 @@ export class RebotRosClient {
   }
 
   sendTrajectory(positions: number[], duration: number) {
-    if (!this.ros) return Promise.reject(new Error('尚未连接 rosbridge'))
-    this.cancelTrajectory()
-    const ros = this.ros
     const seconds = Math.max(0.2, duration)
-    const action = new ROSLIB.Action<TrajectoryGoal, unknown, TrajectoryResult>({
-      ros,
-      name: `${this.namespace}/follow_joint_trajectory`,
-      actionType: 'control_msgs/action/FollowJointTrajectory',
-    })
-    const callId = ++this.callSeq
-    const startedAt = Date.now()
     const goal: TrajectoryGoal = {
       trajectory: {
         joint_names: [...JOINT_NAMES],
@@ -209,67 +280,34 @@ export class RebotRosClient {
         }],
       },
     }
-    this.traffic?.({
-      kind: 'call-start',
-      id: callId,
-      category: 'action',
-      name: `${this.namespace}/follow_joint_trajectory`,
-      type: 'control_msgs/action/FollowJointTrajectory',
-      request: goal,
-      at: startedAt,
-    })
-    const endTraffic = (status: 'success' | 'error', response?: unknown, error?: string) => {
-      this.traffic?.({ kind: 'call-end', id: callId, status, response, error, durationMs: Date.now() - startedAt })
+    return this.runAction<TrajectoryGoal, TrajectoryResult>(
+      `${this.namespace}/follow_joint_trajectory`,
+      'control_msgs/action/FollowJointTrajectory',
+      goal,
+      seconds * 1000 + 20000,
+      (result) =>
+        typeof result?.error_code === 'number' && result.error_code !== 0
+          ? result?.error_string || `轨迹失败，错误码 ${result?.error_code}`
+          : null,
+    )
+  }
+
+  moveToPose(position: number[], orientation: Quaternion, duration: number) {
+    const seconds = Math.max(0.2, duration)
+    const goal: PoseGoal = {
+      target_pose: {
+        position: { x: position[0], y: position[1], z: position[2] },
+        orientation,
+      },
+      duration: seconds,
     }
-
-    const promise = new Promise<void>((resolve, reject) => {
-      let goalId: string | undefined
-      const finish = () => {
-        window.clearTimeout(timer)
-        if (goalId) ros.off(goalId)
-        this.cancelActive = null
-      }
-      const timer = window.setTimeout(() => {
-        if (goalId) action.cancelGoal(goalId)
-        finish()
-        endTraffic('error', undefined, '轨迹执行超时，已请求取消')
-        reject(new Error('轨迹执行超时，已请求取消'))
-      }, seconds * 1000 + 20000)
-
-      goalId = action.sendGoal(
-        goal,
-        (result) => {
-          finish()
-          const failed = typeof result?.error_code === 'number' && result.error_code !== 0
-          const errorText = result?.error_string || `轨迹失败，错误码 ${result?.error_code}`
-          endTraffic(failed ? 'error' : 'success', result, failed ? errorText : undefined)
-          if (failed) {
-            reject(new Error(errorText))
-          } else {
-            resolve()
-          }
-        },
-        undefined,
-        (error) => {
-          finish()
-          endTraffic('error', undefined, error || '轨迹目标被动作服务器拒绝')
-          reject(new Error(error || '轨迹目标被动作服务器拒绝'))
-        },
-      )
-      if (!goalId) {
-        finish()
-        endTraffic('error', undefined, '无法发送轨迹目标')
-        reject(new Error('无法发送轨迹目标'))
-        return
-      }
-      this.cancelActive = () => {
-        if (goalId) action.cancelGoal(goalId)
-        finish()
-        endTraffic('error', undefined, '任务已取消')
-        reject(new Error('任务已取消'))
-      }
-    })
-    return promise
+    return this.runAction<PoseGoal, PoseResult>(
+      `${this.namespace}/move_to_pose`,
+      'rebotarm_msgs/action/MoveToPose',
+      goal,
+      seconds * 1000 + 20000,
+      (result) => (result && result.success === false ? result.message || '末端位姿执行失败' : null),
+    )
   }
 
   cancelTrajectory() {

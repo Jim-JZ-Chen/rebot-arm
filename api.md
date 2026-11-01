@@ -146,7 +146,32 @@ Result 字段：
 支持中途取消（`cancelGoal`）。注意：网页"取消任务"只是请求 action 服务器取消，
 **不是物理急停**，不保证底层运动立即停止。
 
-### 1.8 前端关节限位（软件层约束）
+### 1.8 Action：末端位姿移动
+
+| 项 | 值 |
+| --- | --- |
+| 名称 | `<ns>/move_to_pose` |
+| 类型 | `rebotarm_msgs/action/MoveToPose`（厂商自定义） |
+| 前端超时 | 轨迹时长 + 20 秒，超时自动请求取消 |
+
+由动作序列的 `pose`（末端位姿）步骤使用。IK 与轨迹规划由驱动内部 SDK 完成，前端不做解算。
+请求中姿态以四元数表示，前端把用户输入的 RPY（度）按 ZYX 约定转换：
+
+```json
+{
+  "target_pose": {
+    "position": { "x": 0.3, "y": 0.0, "z": 0.3 },
+    "orientation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+  },
+  "duration": 3
+}
+```
+
+Result 字段：`success`（bool，false 时前端报错并展示 `message`）、`message`、`final_pose`。
+注意：官方文档说明该 action **不发布进度反馈**，前端只显示"执行中 → 成功/失败"。
+目标不可达或 IK 求解失败时 `success: false`。演示模式无 IK 能力，`pose` 步骤仅按真实时长模拟耗时，机械臂不动。
+
+### 1.9 前端关节限位（软件层约束）
 
 前端在发送前把目标角度钳制到下表范围（弧度，`src/lib/robot.ts`），
 这属于面板侧的软件限位，不替代驱动与硬件自身的限位：
@@ -311,6 +336,8 @@ Content-Type: application/json
 [
   { "id": "step-ready", "type": "joint",  "name": "进入观察位",
     "positions": [0.35, 1.05, 0.7, -0.35, 0.25, -0.4], "duration": 4 },
+  { "id": "step-pick",  "type": "pose",   "name": "移到工件上方",
+    "position": [0.3, 0.0, 0.3], "rpy": [0, 0, 0], "duration": 3 },
   { "id": "step-open",  "type": "gripper", "name": "张开夹爪", "action": "open" },
   { "id": "step-wait",  "type": "wait",   "name": "等待稳定", "duration": 0.8 },
   { "id": "step-close", "type": "gripper", "name": "闭合夹爪", "action": "close" },
@@ -323,6 +350,7 @@ Content-Type: application/json
 | `type` | 专有字段 | 说明 |
 | --- | --- | --- |
 | `joint` | `positions: number[6]`（rad）、`duration: number`（s） | 发送 FollowJointTrajectory 单点轨迹 |
+| `pose` | `position: number[3]`（m，XYZ）、`rpy: number[3]`（rad，ZYX 欧拉角）、`duration: number`（s） | 发送 MoveToPose 末端位姿 action，IK 由驱动解算 |
 | `gripper` | `action: "open" \| "close"` | 调用夹爪服务 |
 | `wait` | `duration: number`（s） | 纯等待，不发任何指令 |
 | `home` | — | 调用安全回零服务 |
@@ -369,7 +397,7 @@ localStorage 键：`rebot.rosbridge.url`、`rebot.namespace` 保存连接配置�
 | Service | `<ns>/gripper/close` | `rebotarm_msgs/srv/GripperCommand` | 闭合夹爪 | ✅ |
 | Service | `<ns>/gravity_compensation/start` | `std_srvs/srv/Trigger` | 启动重力补偿 | — |
 | Service | `<ns>/gravity_compensation/stop` | `std_srvs/srv/Trigger` | 停止重力补偿 | — |
-| Action | `<ns>/move_to_pose` | `rebotarm_msgs/action/MoveToPose` | 末端位姿轨迹 | — |
+| Action | `<ns>/move_to_pose` | `rebotarm_msgs/action/MoveToPose` | 末端位姿轨迹 | ✅ |
 | Action | `<ns>/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | 标准关节轨迹 | ✅ |
 | Action | `<ns>/gripper/command` | `control_msgs/action/GripperCommand` | 标准夹爪 action | — |
 | Command Topic | `<ns>/joints/<joint>/cmd/mit` | `rebotarm_msgs/msg/JointMitCmd` | 单关节 MIT raw command | — |
@@ -540,7 +568,7 @@ ros2 service call /rebotarm/move_to_pose_ik rebotarm_msgs/srv/MoveToPoseIK \
 
 ## 9. Action 详解
 
-### 9.1 `<ns>/move_to_pose`
+### 9.1 `<ns>/move_to_pose` ✅
 
 `rebotarm_msgs/action/MoveToPose`。末端笛卡尔位姿 action，内部调用 SDK `RebotArmEndPose.move_to_traj(...)`。
 

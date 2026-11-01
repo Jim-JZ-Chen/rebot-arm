@@ -12,6 +12,8 @@ export const JOINT_LIMITS = [
 export const ZERO_POSE = [0, 0, 0, 0, 0, 0]
 export const READY_POSE = [0, 0.75, 0.55, 0, 0, 0]
 export const OBSERVE_POSE = [0.35, 1.05, 0.7, -0.35, 0.25, -0.4]
+export const DEFAULT_POSE_POSITION = [0.3, 0, 0.3]
+export const DEFAULT_POSE_RPY = [0, 0, 0]
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error'
 export type RunState = 'idle' | 'running' | 'cancelling' | 'success' | 'error'
@@ -26,6 +28,7 @@ export interface LogEntry {
 
 export type SequenceStep =
   | { id: string; type: 'joint'; name: string; positions: number[]; duration: number }
+  | { id: string; type: 'pose'; name: string; position: number[]; rpy: number[]; duration: number }
   | { id: string; type: 'gripper'; name: string; action: 'open' | 'close' }
   | { id: string; type: 'wait'; name: string; duration: number }
   | { id: string; type: 'home'; name: string }
@@ -53,8 +56,33 @@ export const clampJoint = (index: number, value: number) =>
 export const formatDeg = (value: number) => `${radToDeg(value).toFixed(1)}°`
 export const uid = () => `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
+export interface Quaternion {
+  x: number
+  y: number
+  z: number
+  w: number
+}
+
+/** ZYX 欧拉角（rad）转四元数，与 ROS geometry_msgs/Pose 约定一致 */
+export function rpyToQuat(rpy: number[]): Quaternion {
+  const [roll, pitch, yaw] = rpy
+  const cr = Math.cos(roll / 2)
+  const sr = Math.sin(roll / 2)
+  const cp = Math.cos(pitch / 2)
+  const sp = Math.sin(pitch / 2)
+  const cy = Math.cos(yaw / 2)
+  const sy = Math.sin(yaw / 2)
+  return {
+    w: cr * cp * cy + sr * sp * sy,
+    x: sr * cp * cy - cr * sp * sy,
+    y: cr * sp * cy + sr * cp * sy,
+    z: cr * cp * sy - sr * sp * cy,
+  }
+}
+
 export function stepSummary(step: SequenceStep) {
   if (step.type === 'joint') return `${step.duration.toFixed(1)} s · ${step.positions.map(formatDeg).join(' / ')}`
+  if (step.type === 'pose') return `${step.duration.toFixed(1)} s · XYZ ${step.position.map((v) => v.toFixed(2)).join(' / ')} m`
   if (step.type === 'gripper') return step.action === 'open' ? 'GRIPPER OPEN' : 'GRIPPER CLOSE'
   if (step.type === 'wait') return `${step.duration.toFixed(1)} s`
   return 'SAFE HOME'
