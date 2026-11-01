@@ -1,93 +1,3 @@
-<script lang="ts">
-import { defineAsyncComponent, defineComponent } from 'vue'
-import { Activity, Cable, Check, Radio, ShieldCheck, Unplug } from '@lucide/vue'
-import JointPanel from '@/components/JointPanel.vue'
-import SequencePanel from '@/components/SequencePanel.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import SystemPowerPanel from '@/components/SystemPowerPanel.vue'
-import { useRebot } from '@/composables/useRebot'
-import type { SequenceStep } from '@/lib/robot'
-import './App.css'
-
-const RobotScene = defineAsyncComponent(() => import('@/components/RobotScene.vue'))
-
-interface PendingConfirmation {
-  title: string
-  description: string
-  confirmLabel: string
-  action: () => void
-}
-
-export default defineComponent({
-  name: 'App',
-  components: {
-    Activity,
-    Cable,
-    Check,
-    Radio,
-    ShieldCheck,
-    Unplug,
-    JointPanel,
-    SequencePanel,
-    ConfirmDialog,
-    SystemPowerPanel,
-    RobotScene,
-  },
-  setup() {
-    return { ...useRebot() }
-  },
-  data() {
-    return {
-      confirmation: null as PendingConfirmation | null,
-    }
-  },
-  computed: {
-    busy(): boolean {
-      return this.runState === 'running'
-    },
-    controlsDisabled(): boolean {
-      return this.mode === 'ros' && (this.connection !== 'connected' || !this.safetyConfirmed)
-    },
-    connectionLabel(): string {
-      if (this.mode === 'demo') return '本地演示'
-      return ({
-        connected: 'ROS 已连接',
-        connecting: '正在连接',
-        disconnected: '未连接',
-        error: '连接异常',
-      })[this.connection]
-    },
-    lastFeedbackLabel(): string {
-      return this.lastFeedback
-        ? new Date(this.lastFeedback).toLocaleTimeString('zh-CN', { hour12: false })
-        : '—'
-    },
-  },
-  methods: {
-    requestSequence(steps: SequenceStep[]) {
-      if (this.mode === 'ros') {
-        this.confirmation = {
-          title: '确认在 ROS 2 目标上运行序列？',
-          description: `将向 ${this.namespace} 连续发送 ${steps.length} 个步骤。请确认命名空间正确、工作区无人且物理急停可用。`,
-          confirmLabel: '确认并运行',
-          action: () => {
-            void this.runSequence(steps)
-          },
-        }
-      } else {
-        void this.runSequence(steps)
-      }
-    },
-    updateTarget(positions: number[]) {
-      this.target = positions
-    },
-    confirmPending() {
-      this.confirmation?.action()
-    },
-  },
-})
-</script>
-
 <template>
   <div class="app-shell">
     <header class="topbar">
@@ -200,3 +110,95 @@ export default defineComponent({
     />
   </div>
 </template>
+
+
+<script lang="ts">
+import { defineAsyncComponent, defineComponent } from 'vue'
+import { Activity, Cable, Check, Radio, ShieldCheck, Unplug } from '@lucide/vue'
+import JointPanel from '@/components/JointPanel.vue'
+import SequencePanel from '@/components/SequencePanel.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import SystemPowerPanel from '@/components/SystemPowerPanel.vue'
+import { useRebot } from '@/composables/useRebot'
+import type { SequenceStep } from '@/lib/robot'
+import './App.css'
+
+const RobotScene = defineAsyncComponent(() => import('@/components/RobotScene.vue'))
+
+interface PendingConfirmation {
+  title: string
+  description: string
+  confirmLabel: string
+  action: () => void
+}
+
+export default defineComponent({
+  name: 'App',
+  components: {
+    Activity,
+    Cable,
+    Check,
+    Radio,
+    ShieldCheck,
+    Unplug,
+    JointPanel,
+    SequencePanel,
+    ConfirmDialog,
+    SystemPowerPanel,
+    RobotScene,
+  },
+  setup() {
+    return { ...useRebot() }
+  },
+  data() {
+    return {
+      confirmation: null as PendingConfirmation | null,
+    }
+  },
+  computed: {
+    busy(): boolean {
+      return this.runState === 'running'
+    },
+    controlsDisabled(): boolean {
+      return this.mode === 'ros' && (this.connection !== 'connected' || !this.safetyConfirmed)
+    },
+    connectionLabel(): string {
+      if (this.mode === 'demo') return '本地演示'
+      return ({
+        connected: 'ROS 已连接',
+        connecting: '正在连接',
+        disconnected: '未连接',
+        error: '连接异常',
+      })[this.connection]
+    },
+    lastFeedbackLabel(): string {
+      return this.lastFeedback
+        ? new Date(this.lastFeedback).toLocaleTimeString('zh-CN', { hour12: false })
+        : '—'
+    },
+  },
+  methods: {
+    requestSequence(steps: SequenceStep[]) {
+      if (this.mode === 'ros') {
+        this.confirmation = {
+          title: '确认在 ROS 2 目标上运行序列？',
+          description: `将向 ${this.namespace} 连续发送 ${steps.length} 个步骤。请确认命名空间正确、工作区无人且物理急停可用。`,
+          confirmLabel: '确认并运行',
+          action: () => {
+            void this.runSequence(steps)
+          },
+        }
+      } else {
+        void this.runSequence(steps)
+      }
+    },
+    updateTarget(positions: number[]) {
+      this.target = positions
+    },
+    confirmPending() {
+      this.confirmation?.action()
+    },
+  },
+})
+</script>
+
