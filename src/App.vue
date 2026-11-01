@@ -1,5 +1,5 @@
-<script setup lang="ts">
-import { computed, defineAsyncComponent, ref } from 'vue'
+<script lang="ts">
+import { defineAsyncComponent, defineComponent } from 'vue'
 import { Activity, Cable, Check, Radio, ShieldCheck, Unplug } from '@lucide/vue'
 import JointPanel from '@/components/JointPanel.vue'
 import SequencePanel from '@/components/SequencePanel.vue'
@@ -18,69 +18,74 @@ interface PendingConfirmation {
   action: () => void
 }
 
-const {
-  mode,
-  connection,
-  url,
-  namespace,
-  current,
-  target,
-  gripperRaw,
-  armStatus,
-  runState,
-  activeStep,
-  logs,
-  feedbackRate,
-  lastFeedback,
-  safetyConfirmed,
-  clearLogs,
-  connect,
-  disconnect,
-  switchMode,
-  executeTrajectory,
-  runSingleService,
-  runSequence,
-  cancelTask,
-} = useRebot()
-
-const confirmation = ref<PendingConfirmation | null>(null)
-const busy = computed(() => runState.value === 'running')
-const controlsDisabled = computed(() => mode.value === 'ros' && (connection.value !== 'connected' || !safetyConfirmed.value))
-const connectionLabel = computed(() => {
-  if (mode.value === 'demo') return '本地演示'
-  return ({
-    connected: 'ROS 已连接',
-    connecting: '正在连接',
-    disconnected: '未连接',
-    error: '连接异常',
-  })[connection.value]
-})
-const lastFeedbackLabel = computed(() => lastFeedback.value
-  ? new Date(lastFeedback.value).toLocaleTimeString('zh-CN', { hour12: false })
-  : '—')
-
-const requestSequence = (steps: SequenceStep[]) => {
-  if (mode.value === 'ros') {
-    confirmation.value = {
-      title: '确认在 ROS 2 目标上运行序列？',
-      description: `将向 ${namespace.value} 连续发送 ${steps.length} 个步骤。请确认命名空间正确、工作区无人且物理急停可用。`,
-      confirmLabel: '确认并运行',
-      action: () => {
-        void runSequence(steps)
-      },
+export default defineComponent({
+  name: 'App',
+  components: {
+    Activity,
+    Cable,
+    Check,
+    Radio,
+    ShieldCheck,
+    Unplug,
+    JointPanel,
+    SequencePanel,
+    ConfirmDialog,
+    SystemPowerPanel,
+    RobotScene,
+  },
+  setup() {
+    return { ...useRebot() }
+  },
+  data() {
+    return {
+      confirmation: null as PendingConfirmation | null,
     }
-  } else {
-    void runSequence(steps)
-  }
-}
-
-const updateTarget = (positions: number[]) => {
-  target.value = positions
-}
-
-const confirmPending = () => {
-  confirmation.value?.action()
-}
+  },
+  computed: {
+    busy(): boolean {
+      return this.runState === 'running'
+    },
+    controlsDisabled(): boolean {
+      return this.mode === 'ros' && (this.connection !== 'connected' || !this.safetyConfirmed)
+    },
+    connectionLabel(): string {
+      if (this.mode === 'demo') return '本地演示'
+      return ({
+        connected: 'ROS 已连接',
+        connecting: '正在连接',
+        disconnected: '未连接',
+        error: '连接异常',
+      })[this.connection]
+    },
+    lastFeedbackLabel(): string {
+      return this.lastFeedback
+        ? new Date(this.lastFeedback).toLocaleTimeString('zh-CN', { hour12: false })
+        : '—'
+    },
+  },
+  methods: {
+    requestSequence(steps: SequenceStep[]) {
+      if (this.mode === 'ros') {
+        this.confirmation = {
+          title: '确认在 ROS 2 目标上运行序列？',
+          description: `将向 ${this.namespace} 连续发送 ${steps.length} 个步骤。请确认命名空间正确、工作区无人且物理急停可用。`,
+          confirmLabel: '确认并运行',
+          action: () => {
+            void this.runSequence(steps)
+          },
+        }
+      } else {
+        void this.runSequence(steps)
+      }
+    },
+    updateTarget(positions: number[]) {
+      this.target = positions
+    },
+    confirmPending() {
+      this.confirmation?.action()
+    },
+  },
+})
 </script>
 
 <template>

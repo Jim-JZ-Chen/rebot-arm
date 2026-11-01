@@ -1,140 +1,3 @@
-<script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Check, Circle, LoaderCircle, Minus, MonitorOff, Power, PowerOff, RefreshCw, X } from '@lucide/vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
-
-type Operation = 'start' | 'shutdown' | 'host'
-type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped'
-
-interface PowerStep {
-  id: string
-  name: string
-  status: StepStatus
-  detail: string
-}
-
-interface PowerJob {
-  id: string
-  operation: Operation
-  label: string
-  launcherMode: 'mock' | 'systemd'
-  status: 'pending' | 'running' | 'success' | 'error'
-  error?: string
-  steps: PowerStep[]
-}
-
-interface SystemStatus {
-  launcherMode: 'mock' | 'systemd'
-  services: {
-    can: boolean
-    driver: boolean
-    rosbridge: boolean
-  }
-  job: PowerJob | null
-}
-
-const status = ref<SystemStatus | null>(null)
-const requestError = ref('')
-const hostNotice = ref(false)
-const confirmation = ref<'shutdown' | 'host' | null>(null)
-let timer: number | undefined
-let refreshGeneration = 0
-let disposed = false
-
-const busy = computed(() => status.value?.job?.status === 'running' || status.value?.job?.status === 'pending')
-const job = computed(() => status.value?.job || null)
-const dialogCopy = computed(() => confirmation.value === 'host'
-  ? {
-      title: '确认关闭整台 ROS 主机？',
-      description: '将先安全回零、禁用机械臂并停止驱动，然后关闭整台控制电脑。关机后无法通过本页面重新开机，必须人工上电。',
-      confirmLabel: '确认关闭主机',
-    }
-  : {
-      title: '确认关闭机械臂系统？',
-      description: '将按顺序安全回零、禁用机械臂，并停止 ROS 驱动、rosbridge 和 CAN。任一步骤失败都会中止后续操作。',
-      confirmLabel: '确认关闭系统',
-    })
-
-const stepStatusLabel: Record<StepStatus, string> = {
-  pending: '等待执行',
-  running: '正在执行',
-  success: '成功',
-  error: '失败',
-  skipped: '跳过',
-}
-
-const serviceItems = computed(() => [
-  { id: 'can', label: 'CAN', active: status.value?.services.can },
-  { id: 'driver', label: 'ROS 驱动', active: status.value?.services.driver },
-  { id: 'rosbridge', label: 'ROSBRIDGE', active: status.value?.services.rosbridge },
-])
-
-const scheduleRefresh = () => {
-  if (disposed) return
-  window.clearTimeout(timer)
-  timer = window.setTimeout(() => void refresh(), busy.value ? 500 : 5000)
-}
-
-async function refresh() {
-  if (disposed) return
-  const generation = ++refreshGeneration
-  try {
-    const response = await fetch('/api/system/status', { cache: 'no-store' })
-    const body = await response.json()
-    if (generation !== refreshGeneration) return
-    if (!response.ok) throw new Error(body.error || `启动器返回 ${response.status}`)
-    status.value = body
-    requestError.value = ''
-  } catch (error) {
-    if (generation !== refreshGeneration) return
-    requestError.value = `启动器连接失败：${error instanceof Error ? error.message : String(error)}`
-  } finally {
-    if (generation === refreshGeneration) scheduleRefresh()
-  }
-}
-
-async function runOperation(operation: Operation) {
-  requestError.value = ''
-  hostNotice.value = false
-  const path = operation === 'start'
-    ? '/api/system/start'
-    : operation === 'shutdown'
-      ? '/api/system/shutdown'
-      : '/api/system/host-shutdown'
-  const confirm = operation === 'start' ? 'START' : operation === 'shutdown' ? 'ARM_SHUTDOWN' : 'HOST_SHUTDOWN'
-  try {
-    const response = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm }),
-    })
-    const body = await response.json()
-    if (!response.ok) throw new Error(body.error || `操作请求失败（${response.status}）`)
-    await refresh()
-  } catch (error) {
-    if (operation === 'host') {
-      hostNotice.value = true
-      requestError.value = '主机连接中断。若“关闭 ROS 主机”已显示成功，这是预期现象；请等待主机断电。'
-    } else {
-      requestError.value = error instanceof Error ? error.message : String(error)
-    }
-  }
-}
-
-const confirmOperation = () => {
-  if (!confirmation.value) return
-  const operation = confirmation.value
-  confirmation.value = null
-  void runOperation(operation)
-}
-
-onMounted(() => void refresh())
-onBeforeUnmount(() => {
-  disposed = true
-  window.clearTimeout(timer)
-})
-</script>
-
 <template>
   <section class="system-power" aria-label="机械臂系统启动与关机">
     <div class="power-header">
@@ -207,3 +70,158 @@ onBeforeUnmount(() => {
     />
   </section>
 </template>
+
+
+<script lang="ts">
+import { defineComponent } from 'vue'
+import { Check, Circle, LoaderCircle, Minus, MonitorOff, Power, PowerOff, RefreshCw, X } from '@lucide/vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+
+type Operation = 'start' | 'shutdown' | 'host'
+type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped'
+
+interface PowerStep {
+  id: string
+  name: string
+  status: StepStatus
+  detail: string
+}
+
+interface PowerJob {
+  id: string
+  operation: Operation
+  label: string
+  launcherMode: 'mock' | 'systemd'
+  status: 'pending' | 'running' | 'success' | 'error'
+  error?: string
+  steps: PowerStep[]
+}
+
+interface SystemStatus {
+  launcherMode: 'mock' | 'systemd'
+  services: {
+    can: boolean
+    driver: boolean
+    rosbridge: boolean
+  }
+  job: PowerJob | null
+}
+
+const stepStatusLabel: Record<StepStatus, string> = {
+  pending: '等待执行',
+  running: '正在执行',
+  success: '成功',
+  error: '失败',
+  skipped: '跳过',
+}
+
+export default defineComponent({
+  name: 'SystemPowerPanel',
+  components: { Check, Circle, LoaderCircle, Minus, MonitorOff, Power, PowerOff, RefreshCw, X, ConfirmDialog },
+  data() {
+    return {
+      status: null as SystemStatus | null,
+      requestError: '',
+      hostNotice: false,
+      confirmation: null as 'shutdown' | 'host' | null,
+      stepStatusLabel,
+      timer: undefined as number | undefined,
+      refreshGeneration: 0,
+      disposed: false,
+    }
+  },
+  computed: {
+    busy(): boolean {
+      return this.status?.job?.status === 'running' || this.status?.job?.status === 'pending'
+    },
+    job(): PowerJob | null {
+      return this.status?.job || null
+    },
+    dialogCopy(): { title: string; description: string; confirmLabel: string } {
+      return this.confirmation === 'host'
+        ? {
+            title: '确认关闭整台 ROS 主机？',
+            description: '将先安全回零、禁用机械臂并停止驱动，然后关闭整台控制电脑。关机后无法通过本页面重新开机，必须人工上电。',
+            confirmLabel: '确认关闭主机',
+          }
+        : {
+            title: '确认关闭机械臂系统？',
+            description: '将按顺序安全回零、禁用机械臂，并停止 ROS 驱动、rosbridge 和 CAN。任一步骤失败都会中止后续操作。',
+            confirmLabel: '确认关闭系统',
+          }
+    },
+    serviceItems(): { id: string; label: string; active: boolean | undefined }[] {
+      return [
+        { id: 'can', label: 'CAN', active: this.status?.services.can },
+        { id: 'driver', label: 'ROS 驱动', active: this.status?.services.driver },
+        { id: 'rosbridge', label: 'ROSBRIDGE', active: this.status?.services.rosbridge },
+      ]
+    },
+  },
+  mounted() {
+    void this.refresh()
+  },
+  beforeUnmount() {
+    this.disposed = true
+    window.clearTimeout(this.timer)
+  },
+  methods: {
+    scheduleRefresh() {
+      if (this.disposed) return
+      window.clearTimeout(this.timer)
+      this.timer = window.setTimeout(() => void this.refresh(), this.busy ? 500 : 5000)
+    },
+    async refresh() {
+      if (this.disposed) return
+      const generation = ++this.refreshGeneration
+      try {
+        const response = await fetch('/api/system/status', { cache: 'no-store' })
+        const body = await response.json()
+        if (generation !== this.refreshGeneration) return
+        if (!response.ok) throw new Error(body.error || `启动器返回 ${response.status}`)
+        this.status = body
+        this.requestError = ''
+      } catch (error) {
+        if (generation !== this.refreshGeneration) return
+        this.requestError = `启动器连接失败：${error instanceof Error ? error.message : String(error)}`
+      } finally {
+        if (generation === this.refreshGeneration) this.scheduleRefresh()
+      }
+    },
+    async runOperation(operation: Operation) {
+      this.requestError = ''
+      this.hostNotice = false
+      const path = operation === 'start'
+        ? '/api/system/start'
+        : operation === 'shutdown'
+          ? '/api/system/shutdown'
+          : '/api/system/host-shutdown'
+      const confirm = operation === 'start' ? 'START' : operation === 'shutdown' ? 'ARM_SHUTDOWN' : 'HOST_SHUTDOWN'
+      try {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm }),
+        })
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || `操作请求失败（${response.status}）`)
+        await this.refresh()
+      } catch (error) {
+        if (operation === 'host') {
+          this.hostNotice = true
+          this.requestError = '主机连接中断。若“关闭 ROS 主机”已显示成功，这是预期现象；请等待主机断电。'
+        } else {
+          this.requestError = error instanceof Error ? error.message : String(error)
+        }
+      }
+    },
+    confirmOperation() {
+      if (!this.confirmation) return
+      const operation = this.confirmation
+      this.confirmation = null
+      void this.runOperation(operation)
+    },
+  },
+})
+</script>
+

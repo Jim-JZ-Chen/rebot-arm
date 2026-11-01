@@ -1,149 +1,3 @@
-<script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronDown, ChevronUp, Download, Play, Plus, Square, Trash2, Upload } from '@lucide/vue'
-import type { LogEntry, RunState, SequenceStep } from '@/lib/robot'
-import {
-  DEFAULT_SEQUENCE,
-  READY_POSE,
-  degToRad,
-  radToDeg,
-  stepSummary,
-  uid,
-} from '@/lib/robot'
-
-const props = defineProps<{
-  activeStep: number | null
-  runState: RunState
-  logs: LogEntry[]
-}>()
-
-const emit = defineEmits<{
-  run: [steps: SequenceStep[]]
-  cancel: []
-  clearLogs: []
-}>()
-
-function loadSequence(): SequenceStep[] {
-  try {
-    const saved = localStorage.getItem('rebot.sequence')
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      if (Array.isArray(parsed) && parsed.every((step) => step.id && step.type)) return parsed
-    }
-  } catch {
-    // Invalid local data falls back to the known-safe editor example.
-  }
-  return DEFAULT_SEQUENCE
-}
-
-const steps = ref<SequenceStep[]>(loadSequence())
-const selectedId = ref(steps.value[0]?.id || '')
-const newType = ref<SequenceStep['type']>('joint')
-const importError = ref('')
-const fileRef = ref<HTMLInputElement | null>(null)
-const logListRef = ref<HTMLDivElement | null>(null)
-const busy = computed(() => props.runState === 'running')
-const selected = computed(() => steps.value.find((step) => step.id === selectedId.value))
-const inputValue = (event: Event) => (event.target as HTMLInputElement | HTMLSelectElement).value
-
-watch(steps, (value) => {
-  localStorage.setItem('rebot.sequence', JSON.stringify(value))
-}, { deep: true })
-
-watch(() => props.logs, async () => {
-  await nextTick()
-  if (logListRef.value) logListRef.value.scrollTop = logListRef.value.scrollHeight
-})
-
-const updateSelected = (next: SequenceStep) => {
-  steps.value = steps.value.map((item) => item.id === next.id ? next : item)
-}
-
-const updateName = (name: string) => {
-  if (selected.value) updateSelected({ ...selected.value, name })
-}
-
-const updateJointPosition = (index: number, value: number) => {
-  const step = selected.value
-  if (step?.type !== 'joint') return
-  const positions = [...step.positions]
-  positions[index] = degToRad(value)
-  updateSelected({ ...step, positions })
-}
-
-const updateDuration = (value: number) => {
-  const step = selected.value
-  if (step?.type === 'joint') updateSelected({ ...step, duration: Math.max(0.2, value) })
-  if (step?.type === 'wait') updateSelected({ ...step, duration: Math.max(0, value) })
-}
-
-const updateGripperAction = (action: 'open' | 'close') => {
-  const step = selected.value
-  if (step?.type === 'gripper') updateSelected({ ...step, action })
-}
-
-const setNewType = (value: string) => {
-  newType.value = value as SequenceStep['type']
-}
-
-const addStep = () => {
-  const id = uid()
-  const base = { id, name: `新步骤 ${steps.value.length + 1}` }
-  let step: SequenceStep
-  if (newType.value === 'joint') step = { ...base, type: 'joint', positions: [...READY_POSE], duration: 3 }
-  else if (newType.value === 'gripper') step = { ...base, type: 'gripper', action: 'open' }
-  else if (newType.value === 'wait') step = { ...base, type: 'wait', duration: 1 }
-  else step = { ...base, type: 'home' }
-  steps.value = [...steps.value, step]
-  selectedId.value = id
-}
-
-const removeStep = (id: string) => {
-  const next = steps.value.filter((step) => step.id !== id)
-  steps.value = next
-  if (selectedId.value === id) selectedId.value = next[0]?.id || ''
-}
-
-const moveStep = (index: number, direction: -1 | 1) => {
-  const destination = index + direction
-  if (destination < 0 || destination >= steps.value.length) return
-  const next = [...steps.value]
-  const currentStep = next[index]
-  next[index] = next[destination]
-  next[destination] = currentStep
-  steps.value = next
-}
-
-const exportSequence = () => {
-  const blob = new Blob([JSON.stringify({ format: 'rebot-sequence', version: 1, steps: steps.value }, null, 2)], { type: 'application/json' })
-  const href = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = href
-  anchor.download = 'rebot-动作序列.json'
-  anchor.click()
-  URL.revokeObjectURL(href)
-}
-
-const importSequence = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  try {
-    const parsed = JSON.parse(await file.text())
-    const imported = Array.isArray(parsed) ? parsed : parsed.steps
-    if (!Array.isArray(imported) || !imported.every((step) => step.id && step.type && step.name)) {
-      throw new Error('文件中没有有效的步骤列表')
-    }
-    steps.value = imported
-    selectedId.value = imported[0]?.id || ''
-    importError.value = ''
-  } catch (error) {
-    importError.value = error instanceof Error ? error.message : 'JSON 导入失败'
-  }
-}
-</script>
-
 <template>
   <aside class="panel sequence-panel" aria-label="动作编排与事件日志">
     <section class="panel-section sequence-section">
@@ -153,10 +7,10 @@ const importSequence = async (event: Event) => {
       </div>
       <p class="section-note">逐步等待 Action / Service 真实结果。编辑内容仅保存在当前浏览器。</p>
       <div class="sequence-actions">
-        <button type="button" class="primary-button" :disabled="busy || !steps.length" @click="emit('run', steps)">
+        <button type="button" class="primary-button" :disabled="busy || !steps.length" @click="$emit('run', steps)">
           <Play :size="15" fill="currentColor" />运行序列
         </button>
-        <button type="button" class="secondary-button" :disabled="!busy" @click="emit('cancel')">
+        <button type="button" class="secondary-button" :disabled="!busy" @click="$emit('cancel')">
           <Square :size="14" />取消任务
         </button>
       </div>
@@ -189,7 +43,7 @@ const importSequence = async (event: Event) => {
         <button type="button" :disabled="busy" @click="addStep"><Plus :size="15" />添加步骤</button>
       </div>
       <div class="file-actions">
-        <button type="button" @click="fileRef?.click()"><Upload :size="14" />导入 JSON</button>
+        <button type="button" @click="openFilePicker"><Upload :size="14" />导入 JSON</button>
         <button type="button" :disabled="!steps.length" @click="exportSequence"><Download :size="14" />导出 JSON</button>
         <input ref="fileRef" type="file" accept="application/json,.json" hidden @change="importSequence" />
       </div>
@@ -223,7 +77,7 @@ const importSequence = async (event: Event) => {
     </section>
 
     <section class="panel-section log-section">
-      <div class="section-heading"><h2>事件日志</h2><button type="button" class="text-button" @click="emit('clearLogs')">清空</button></div>
+      <div class="section-heading"><h2>事件日志</h2><button type="button" class="text-button" @click="$emit('clearLogs')">清空</button></div>
       <div ref="logListRef" class="log-list" aria-live="polite">
         <div v-for="log in logs" :key="log.id" class="log-entry" :class="`log-${log.level}`">
           <time>{{ log.time }}</time><span>{{ log.message }}</span>
@@ -233,3 +87,162 @@ const importSequence = async (event: Event) => {
     </section>
   </aside>
 </template>
+
+
+<script lang="ts">
+import { defineComponent } from 'vue'
+import type { PropType } from 'vue'
+import { ChevronDown, ChevronUp, Download, Play, Plus, Square, Trash2, Upload } from '@lucide/vue'
+import type { LogEntry, RunState, SequenceStep } from '@/lib/robot'
+import {
+  DEFAULT_SEQUENCE,
+  READY_POSE,
+  degToRad,
+  radToDeg,
+  stepSummary,
+  uid,
+} from '@/lib/robot'
+
+function loadSequence(): SequenceStep[] {
+  try {
+    const saved = localStorage.getItem('rebot.sequence')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.every((step) => step.id && step.type)) return parsed
+    }
+  } catch {
+    // Invalid local data falls back to the known-safe editor example.
+  }
+  return DEFAULT_SEQUENCE
+}
+
+export default defineComponent({
+  name: 'SequencePanel',
+  components: { ChevronDown, ChevronUp, Download, Play, Plus, Square, Trash2, Upload },
+  props: {
+    activeStep: { type: Number as PropType<number | null>, default: null },
+    runState: { type: String as PropType<RunState>, required: true },
+    logs: { type: Array as PropType<LogEntry[]>, required: true },
+  },
+  emits: ['run', 'cancel', 'clearLogs'],
+  data() {
+    const steps = loadSequence()
+    return {
+      steps,
+      selectedId: steps[0]?.id || '',
+      newType: 'joint' as SequenceStep['type'],
+      importError: '',
+    }
+  },
+  computed: {
+    busy(): boolean {
+      return this.runState === 'running'
+    },
+    selected(): SequenceStep | undefined {
+      return this.steps.find((step) => step.id === this.selectedId)
+    },
+  },
+  watch: {
+    steps: {
+      deep: true,
+      handler(value: SequenceStep[]) {
+        localStorage.setItem('rebot.sequence', JSON.stringify(value))
+      },
+    },
+    async logs() {
+      await this.$nextTick()
+      const list = this.$refs.logListRef as HTMLDivElement | undefined
+      if (list) list.scrollTop = list.scrollHeight
+    },
+  },
+  methods: {
+    stepSummary,
+    radToDeg,
+    inputValue(event: Event) {
+      return (event.target as HTMLInputElement | HTMLSelectElement).value
+    },
+    openFilePicker() {
+      const input = this.$refs.fileRef as HTMLInputElement | undefined
+      input?.click()
+    },
+    updateSelected(next: SequenceStep) {
+      this.steps = this.steps.map((item) => (item.id === next.id ? next : item))
+    },
+    updateName(name: string) {
+      if (this.selected) this.updateSelected({ ...this.selected, name })
+    },
+    updateJointPosition(index: number, value: number) {
+      const step = this.selected
+      if (step?.type !== 'joint') return
+      const positions = [...step.positions]
+      positions[index] = degToRad(value)
+      this.updateSelected({ ...step, positions })
+    },
+    updateDuration(value: number) {
+      const step = this.selected
+      if (step?.type === 'joint') this.updateSelected({ ...step, duration: Math.max(0.2, value) })
+      if (step?.type === 'wait') this.updateSelected({ ...step, duration: Math.max(0, value) })
+    },
+    updateGripperAction(action: 'open' | 'close') {
+      const step = this.selected
+      if (step?.type === 'gripper') this.updateSelected({ ...step, action })
+    },
+    setNewType(value: string) {
+      this.newType = value as SequenceStep['type']
+    },
+    addStep() {
+      const id = uid()
+      const base = { id, name: `新步骤 ${this.steps.length + 1}` }
+      let step: SequenceStep
+      if (this.newType === 'joint') step = { ...base, type: 'joint', positions: [...READY_POSE], duration: 3 }
+      else if (this.newType === 'gripper') step = { ...base, type: 'gripper', action: 'open' }
+      else if (this.newType === 'wait') step = { ...base, type: 'wait', duration: 1 }
+      else step = { ...base, type: 'home' }
+      this.steps = [...this.steps, step]
+      this.selectedId = id
+    },
+    removeStep(id: string) {
+      const next = this.steps.filter((step) => step.id !== id)
+      this.steps = next
+      if (this.selectedId === id) this.selectedId = next[0]?.id || ''
+    },
+    moveStep(index: number, direction: -1 | 1) {
+      const destination = index + direction
+      if (destination < 0 || destination >= this.steps.length) return
+      const next = [...this.steps]
+      const currentStep = next[index]
+      next[index] = next[destination]
+      next[destination] = currentStep
+      this.steps = next
+    },
+    exportSequence() {
+      const blob = new Blob([JSON.stringify({ format: 'rebot-sequence', version: 1, steps: this.steps }, null, 2)], { type: 'application/json' })
+      const href = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = href
+      anchor.download = 'rebot-动作序列.json'
+      anchor.click()
+      URL.revokeObjectURL(href)
+    },
+    async importSequence(event: Event) {
+      const input = event.target as HTMLInputElement
+      const file = input.files?.[0]
+      input.value = ''
+      if (!file) return
+      try {
+        const parsed = JSON.parse(await file.text())
+        const imported = Array.isArray(parsed) ? parsed : parsed.steps
+        if (!Array.isArray(imported) || !imported.every((step) => step.id && step.type && step.name)) {
+          throw new Error('文件中没有有效的步骤列表')
+        }
+        this.steps = imported
+        this.selectedId = imported[0]?.id || ''
+        this.importError = ''
+      } catch (error) {
+        this.importError = error instanceof Error ? error.message : 'JSON 导入失败'
+      }
+    },
+  },
+})
+</script>
+
