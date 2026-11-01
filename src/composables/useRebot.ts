@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { RebotRosClient } from '@/lib/rosClient'
-import type { ArmStatus, ConnectionState, LogEntry, LogLevel, RunState, SequenceStep } from '@/lib/robot'
+import type { ArmStatus, ConnectionState, InterfaceCall, LogEntry, LogLevel, RunState, SequenceStep, TopicStat, TrafficEvent } from '@/lib/robot'
 import { READY_POSE, ZERO_POSE } from '@/lib/robot'
 
 const initialLog: LogEntry = {
@@ -10,6 +10,15 @@ const initialLog: LogEntry = {
   level: 'info',
 }
 
+function previewJson(value: unknown, max = 800) {
+  try {
+    const text = JSON.stringify(value)
+    return text.length > max ? `${text.slice(0, max)}…` : text
+  } catch {
+    return String(value)
+  }
+}
+
 export function useRebot() {
   const client = new RebotRosClient()
   let busy = false
@@ -17,6 +26,8 @@ export function useRebot() {
   let demoReject: ((reason: Error) => void) | null = null
   let feedbackTimes: number[] = []
   let currentSnapshot = [...READY_POSE]
+  const topicBuffer = new Map<string, { messageType: string; count: number; times: number[]; lastAt: number; lastMessage: unknown }>()
+  let topicFlushTimer: number | undefined
 
   const mode = ref<'demo' | 'ros'>('demo')
   const connection = ref<ConnectionState>('disconnected')
@@ -32,6 +43,8 @@ export function useRebot() {
   const feedbackRate = ref(0)
   const lastFeedback = ref<number | null>(null)
   const safetyConfirmed = ref(false)
+  const topicStats = ref<TopicStat[]>([])
+  const interfaceCalls = ref<InterfaceCall[]>([])
 
   const updateCurrent = (positions: number[]) => {
     currentSnapshot = [...positions]
@@ -54,6 +67,74 @@ export function useRebot() {
     logs.value = []
   }
 
+  const flushTopics = () => {
+    topicFlushTimer = undefined
+    const now = Date.now()
+    topicStats.value = [...topicBuffer.entries()].map(([name, stat]) => {
+      stat.times = stat.times.filter((time) => now - time < 2000)
+      return {
+        name,
+        messageType: stat.messageType,
+        count: stat.count,
+        rate: Math.round((stat.times.length / 2) * 10) / 10,
+        lastAt: stat.lastAt,
+        lastMessage: previewJson(stat.lastMessage),
+      }
+    })
+  }
+
+  const resetTopicStats = () => {
+    topicBuffer.clear()
+    if (topicFlushTimer !== undefined) {
+      window.clearTimeout(topicFlushTimer)
+      topicFlushTimer = undefined
+    }
+    topicStats.value = []
+  }
+
+  const handleTraffic = (event: TrafficEvent) => {
+    if (event.kind === 'topic') {
+      const stat = topicBuffer.get(event.name) || { messageType: event.messageType, count: 0, times: [], lastAt: 0, lastMessage: null }
+      stat.count += 1
+      stat.times.push(event.at)
+      stat.lastAt = event.at
+      stat.lastMessage = event.message
+      topicBuffer.set(event.name, stat)
+      if (topicFlushTimer === undefined) topicFlushTimer = window.setTimeout(flushTopics, 400)
+      return
+    }
+    if (event.kind === 'call-start') {
+      interfaceCalls.value = [
+        {
+          id: event.id,
+          category: event.category,
+          name: event.name,
+          type: event.type,
+          request: previewJson(event.request),
+          status: 'pending',
+          response: '',
+          startedAt: event.at,
+        },
+        ...interfaceCalls.value.slice(0, 39),
+      ]
+      return
+    }
+    interfaceCalls.value = interfaceCalls.value.map((call) =>
+      call.id === event.id
+        ? {
+            ...call,
+            status: event.status,
+            response: event.error || previewJson(event.response ?? null),
+            durationMs: event.durationMs,
+          }
+        : call,
+    )
+  }
+
+  const clearInterfaceLog = () => {
+    interfaceCalls.value = []
+  }
+
   const disconnect = () => {
     generation += 1
     demoReject?.(new Error('连接已断开'))
@@ -65,6 +146,7 @@ export function useRebot() {
     lastFeedback.value = null
     runState.value = 'idle'
     activeStep.value = null
+    resetTopicStats()
   }
 
   const connect = () => {
@@ -101,6 +183,7 @@ export function useRebot() {
         onArmStatus: (status) => {
           armStatus.value = status
         },
+        onTraffic: handleTraffic,
       })
     } catch (error) {
       connection.value = 'error'
@@ -134,7 +217,8 @@ export function useRebot() {
     return new Promise<void>((resolve, reject) => {
       const start = [...currentSnapshot]
       const startedAt = performance.now()
-      const demoDuration = Math.min(3200, Math.max(650, duration * 650))
+      // 与驱动端一致：按真实时长做关节空间线性插值（ros_actions.py 的 ratio 逻辑）
+      const demoDuration = Math.max(0.2, duration) * 1000
       demoReject = reject
       const frame = (now: number) => {
         if (generation !== token) {
@@ -142,10 +226,9 @@ export function useRebot() {
           reject(new Error('任务已取消'))
           return
         }
-        const linear = Math.min(1, (now - startedAt) / demoDuration)
-        const eased = 1 - Math.pow(1 - linear, 3)
-        updateCurrent(start.map((value, index) => value + (positions[index] - value) * eased))
-        if (linear < 1) {
+        const ratio = Math.min(1, (now - startedAt) / demoDuration)
+        updateCurrent(start.map((value, index) => value + (positions[index] - value) * ratio))
+        if (ratio < 1) {
           requestAnimationFrame(frame)
         } else {
           demoReject = null
@@ -297,6 +380,7 @@ export function useRebot() {
   onBeforeUnmount(() => {
     generation += 1
     demoReject?.(new Error('面板已关闭'))
+    if (topicFlushTimer !== undefined) window.clearTimeout(topicFlushTimer)
     client.disconnect()
   })
 
@@ -315,7 +399,10 @@ export function useRebot() {
     feedbackRate,
     lastFeedback,
     safetyConfirmed,
+    topicStats,
+    interfaceCalls,
     clearLogs,
+    clearInterfaceLog,
     connect,
     disconnect,
     switchMode,

@@ -40,6 +40,14 @@
 
     <SystemPowerPanel />
 
+    <InterfacePanel
+      :mode="mode"
+      :connection="connection"
+      :topics="topicStats"
+      :calls="interfaceCalls"
+      @clear="clearInterfaceLog"
+    />
+
     <div class="safety-bar" :class="{ confirmed: safetyConfirmed || mode === 'demo' }">
       <template v-if="mode === 'demo'">
         <Activity :size="15" /><span><strong>演示数据</strong>　所有运动和状态均在浏览器本地生成，不会访问硬件。</span>
@@ -119,6 +127,7 @@ import JointPanel from '@/components/JointPanel.vue'
 import SequencePanel from '@/components/SequencePanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SystemPowerPanel from '@/components/SystemPowerPanel.vue'
+import InterfacePanel from '@/components/InterfacePanel.vue'
 import { useRebot } from '@/composables/useRebot'
 import type { SequenceStep } from '@/lib/robot'
 import './App.css'
@@ -145,6 +154,7 @@ export default defineComponent({
     SequencePanel,
     ConfirmDialog,
     SystemPowerPanel,
+    InterfacePanel,
     RobotScene,
   },
   setup() {

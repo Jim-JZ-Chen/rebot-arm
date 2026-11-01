@@ -1,10 +1,12 @@
 import * as ROSLIB from 'roslib'
 import { JOINT_NAMES } from './robot'
+import type { TrafficEvent } from './robot'
 
 interface RosEvents {
   onConnection: (state: 'connected' | 'disconnected' | 'error', detail?: string) => void
   onJoints: (positions: number[], gripperRaw?: number) => void
   onArmStatus: (status: Record<string, unknown>) => void
+  onTraffic?: (event: TrafficEvent) => void
 }
 
 interface JointStateMessage {
@@ -33,10 +35,13 @@ export class RebotRosClient {
   private jointTopic: ROSLIB.Topic<JointStateMessage> | null = null
   private statusTopic: ROSLIB.Topic<Record<string, unknown>> | null = null
   private cancelActive: (() => void) | null = null
+  private traffic: ((event: TrafficEvent) => void) | null = null
+  private callSeq = 0
 
   connect(url: string, namespace: string, events: RosEvents) {
     this.disconnect()
     this.namespace = normalizeNamespace(namespace)
+    this.traffic = events.onTraffic || null
     const ros = new ROSLIB.Ros({ url })
     this.ros = ros
 
@@ -64,6 +69,13 @@ export class RebotRosClient {
       queue_length: 1,
     })
     this.jointTopic.subscribe((msg) => {
+      this.traffic?.({
+        kind: 'topic',
+        name: `${this.namespace}/joint_states`,
+        messageType: 'sensor_msgs/msg/JointState',
+        message: msg,
+        at: Date.now(),
+      })
       if (!msg.name || !msg.position) return
       const positions = JOINT_NAMES.map((name) => {
         const index = msg.name!.indexOf(name)
@@ -87,28 +99,65 @@ export class RebotRosClient {
       throttle_rate: 100,
       queue_length: 1,
     })
-    this.statusTopic.subscribe((message) => events.onArmStatus(message))
+    this.statusTopic.subscribe((message) => {
+      this.traffic?.({
+        kind: 'topic',
+        name: `${this.namespace}/arm_status`,
+        messageType: 'rebotarm_msgs/msg/ArmStatus',
+        message,
+        at: Date.now(),
+      })
+      events.onArmStatus(message)
+    })
   }
 
   private async callService(name: string, type: string, request: Record<string, unknown>, timeout = 12000): Promise<void> {
     if (!this.ros) throw new Error('尚未连接 rosbridge')
     const ros = this.ros
+    const callId = ++this.callSeq
+    const startedAt = Date.now()
+    this.traffic?.({ kind: 'call-start', id: callId, category: 'service', name, type, request, at: startedAt })
     const service = new ROSLIB.Service<Record<string, unknown>, { success?: boolean; message?: string }>({
       ros,
       name,
       serviceType: type,
     })
     return new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(() => reject(new Error(`服务调用超时：${name}`)), timeout)
+      const timer = window.setTimeout(() => {
+        this.traffic?.({
+          kind: 'call-end',
+          id: callId,
+          status: 'error',
+          error: `服务调用超时：${name}`,
+          durationMs: Date.now() - startedAt,
+        })
+        reject(new Error(`服务调用超时：${name}`))
+      }, timeout)
       service.callService(
         request,
         (result) => {
           window.clearTimeout(timer)
-          if (result.success === false) reject(new Error(result.message || `服务返回失败：${name}`))
+          const failed = result.success === false
+          this.traffic?.({
+            kind: 'call-end',
+            id: callId,
+            status: failed ? 'error' : 'success',
+            response: result,
+            error: failed ? result.message || `服务返回失败：${name}` : undefined,
+            durationMs: Date.now() - startedAt,
+          })
+          if (failed) reject(new Error(result.message || `服务返回失败：${name}`))
           else resolve()
         },
         (error: string) => {
           window.clearTimeout(timer)
+          this.traffic?.({
+            kind: 'call-end',
+            id: callId,
+            status: 'error',
+            error: error || `服务调用失败：${name}`,
+            durationMs: Date.now() - startedAt,
+          })
           reject(new Error(error || `服务调用失败：${name}`))
         },
       )
@@ -146,6 +195,32 @@ export class RebotRosClient {
       name: `${this.namespace}/follow_joint_trajectory`,
       actionType: 'control_msgs/action/FollowJointTrajectory',
     })
+    const callId = ++this.callSeq
+    const startedAt = Date.now()
+    const goal: TrajectoryGoal = {
+      trajectory: {
+        joint_names: [...JOINT_NAMES],
+        points: [{
+          positions,
+          time_from_start: {
+            sec: Math.floor(seconds),
+            nanosec: Math.floor((seconds % 1) * 1e9),
+          },
+        }],
+      },
+    }
+    this.traffic?.({
+      kind: 'call-start',
+      id: callId,
+      category: 'action',
+      name: `${this.namespace}/follow_joint_trajectory`,
+      type: 'control_msgs/action/FollowJointTrajectory',
+      request: goal,
+      at: startedAt,
+    })
+    const endTraffic = (status: 'success' | 'error', response?: unknown, error?: string) => {
+      this.traffic?.({ kind: 'call-end', id: callId, status, response, error, durationMs: Date.now() - startedAt })
+    }
 
     const promise = new Promise<void>((resolve, reject) => {
       let goalId: string | undefined
@@ -157,26 +232,19 @@ export class RebotRosClient {
       const timer = window.setTimeout(() => {
         if (goalId) action.cancelGoal(goalId)
         finish()
+        endTraffic('error', undefined, '轨迹执行超时，已请求取消')
         reject(new Error('轨迹执行超时，已请求取消'))
       }, seconds * 1000 + 20000)
 
       goalId = action.sendGoal(
-        {
-          trajectory: {
-            joint_names: [...JOINT_NAMES],
-            points: [{
-              positions,
-              time_from_start: {
-                sec: Math.floor(seconds),
-                nanosec: Math.floor((seconds % 1) * 1e9),
-              },
-            }],
-          },
-        },
+        goal,
         (result) => {
           finish()
-          if (typeof result?.error_code === 'number' && result.error_code !== 0) {
-            reject(new Error(result.error_string || `轨迹失败，错误码 ${result.error_code}`))
+          const failed = typeof result?.error_code === 'number' && result.error_code !== 0
+          const errorText = result?.error_string || `轨迹失败，错误码 ${result?.error_code}`
+          endTraffic(failed ? 'error' : 'success', result, failed ? errorText : undefined)
+          if (failed) {
+            reject(new Error(errorText))
           } else {
             resolve()
           }
@@ -184,17 +252,20 @@ export class RebotRosClient {
         undefined,
         (error) => {
           finish()
+          endTraffic('error', undefined, error || '轨迹目标被动作服务器拒绝')
           reject(new Error(error || '轨迹目标被动作服务器拒绝'))
         },
       )
       if (!goalId) {
         finish()
+        endTraffic('error', undefined, '无法发送轨迹目标')
         reject(new Error('无法发送轨迹目标'))
         return
       }
       this.cancelActive = () => {
         if (goalId) action.cancelGoal(goalId)
         finish()
+        endTraffic('error', undefined, '任务已取消')
         reject(new Error('任务已取消'))
       }
     })
@@ -211,6 +282,7 @@ export class RebotRosClient {
     this.statusTopic?.unsubscribe()
     this.jointTopic = null
     this.statusTopic = null
+    this.traffic = null
     if (this.ros) {
       this.ros.close()
       this.ros = null

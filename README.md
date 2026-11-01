@@ -96,6 +96,8 @@ sudo apt install ros-jazzy-rosbridge-suite
 
 ## 使用的 ROS 接口
 
+官方接口文档： https://github.com/Seeed-Projects/reBotArmController_ROS2/blob/main/API_zh.md
+
 - `/<namespace>/joint_states`：`sensor_msgs/msg/JointState`
 - `/<namespace>/arm_status`：`rebotarm_msgs/msg/ArmStatus`
 - `/<namespace>/follow_joint_trajectory`：`control_msgs/action/FollowJointTrajectory`

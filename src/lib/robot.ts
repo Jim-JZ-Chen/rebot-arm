@@ -59,3 +59,60 @@ export function stepSummary(step: SequenceStep) {
   if (step.type === 'wait') return `${step.duration.toFixed(1)} s`
   return 'SAFE HOME'
 }
+
+// ---- 连接层流量监控 ----
+
+/** Topic 收到一条消息（at 为接收时间戳 ms） */
+export interface TopicTrafficEvent {
+  kind: 'topic'
+  name: string
+  messageType: string
+  message: unknown
+  at: number
+}
+
+/** 一次 Service / Action 调用发起 */
+export interface CallStartEvent {
+  kind: 'call-start'
+  id: number
+  category: 'service' | 'action'
+  name: string
+  type: string
+  request: unknown
+  at: number
+}
+
+/** 一次 Service / Action 调用结束（成功或失败） */
+export interface CallEndEvent {
+  kind: 'call-end'
+  id: number
+  status: 'success' | 'error'
+  response?: unknown
+  error?: string
+  durationMs: number
+}
+
+export type TrafficEvent = TopicTrafficEvent | CallStartEvent | CallEndEvent
+
+/** 面板展示用：单个 topic 的聚合统计 */
+export interface TopicStat {
+  name: string
+  messageType: string
+  count: number
+  rate: number
+  lastAt: number
+  lastMessage: string
+}
+
+/** 面板展示用：一次 Service / Action 调用记录 */
+export interface InterfaceCall {
+  id: number
+  category: 'service' | 'action'
+  name: string
+  type: string
+  request: string
+  status: 'pending' | 'success' | 'error'
+  response: string
+  startedAt: number
+  durationMs?: number
+}
