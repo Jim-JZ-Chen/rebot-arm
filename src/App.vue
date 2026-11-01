@@ -63,15 +63,11 @@
     <main class="workspace-grid">
       <JointPanel
         :current="current"
-        :target="target"
-        :gripper-raw="gripperRaw"
         :arm-status="armStatus"
         :run-state="runState"
         :controls-disabled="controlsDisabled"
-        @update:target="updateTarget"
-        @execute="executeTrajectory"
+        :namespace="namespace"
         @service="runSingleService"
-        @gripper="runGripper"
       />
 
       <section class="center-workspace" aria-label="实时模型与反馈">
@@ -88,7 +84,7 @@
           <div><small>控制链路</small><strong>{{ mode === 'demo' ? 'LOCAL ONLY' : 'ROS ACTION / SRV' }}</strong></div>
         </div>
         <div class="workspace-caption">
-          <span>模型显示实际关节反馈；目标值只有在点击执行后才会发送。</span>
+          <span>模型显示实际关节反馈。</span>
           <span>THREE.JS / URDF</span>
         </div>
       </section>
@@ -202,9 +198,6 @@ export default defineComponent({
       } else {
         void this.runSequence(steps)
       }
-    },
-    updateTarget(positions: number[]) {
-      this.target = positions
     },
     confirmPending() {
       this.confirmation?.action()
